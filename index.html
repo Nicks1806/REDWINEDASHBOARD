@@ -1340,85 +1340,60 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
         const totalTM = segBulan.reduce((s,d)=>s+d.tm,0);
         const totalMKT = segBulan.reduce((s,d)=>s+d.mkt,0);
 
-        // ── LINE CHART (2 charts: Omzet+Laba top, TM vs MKT bottom) ──
+        // ── LINE CHART (2 charts side by side) ──
         const renderLine = () => {
-          const PH = isMobile?120:160, PW = isMobile?340:Math.max(480, progData.length*200), PL = 58, PR = 20, PT = 20, PB = 30;
-          const xStep = progData.length > 1 ? (PW - PL - PR) / (progData.length - 1) : 0;
+          const PH = isMobile?140:200, halfW = isMobile?300:Math.max(280, 240), PL = 50, PR = 16, PT = 28, PB = 36;
+          const xStep = progData.length > 1 ? (halfW - PL - PR) / (progData.length - 1) : 0;
           const toX = (i) => PL + i * xStep;
-          // Badge helper
-          const badge = (x,y,text,bg,anchor) => {
-            const w = text.length*6.2+14;
-            const bx = anchor==='start'?x+6:anchor==='end'?x-w-6:x-w/2;
-            return (<g><rect x={bx} y={y-10} width={w} height={16} rx={5} fill={bg} opacity={.92}/><text x={bx+w/2} y={y+1} textAnchor="middle" fill="#fff" fontSize={isMobile?8:9} fontWeight={700}>{text}</text></g>);
+          const badge = (x,y,text,bg,anc) => {
+            const w = text.length*6+14;
+            const bx = anc==='start'?x+4:anc==='end'?x-w-4:x-w/2;
+            return (<g><rect x={bx} y={y-10} width={w} height={16} rx={5} fill={bg} opacity={.92}/><text x={bx+w/2} y={y+1} textAnchor="middle" fill="#fff" fontSize={isMobile?7:9} fontWeight={700}>{text}</text></g>);
           };
-          // Chart 1: Omzet + Laba
-          const toY1 = (v) => PT + (1 - v / (maxR * 1.2)) * PH;
-          const pathO = progData.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY1(d.rev)}`).join(' ');
-          const pathL = progData.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY1(d.laba)}`).join(' ');
-          const areaO = pathO + ` L${toX(progData.length-1)},${PT+PH} L${toX(0)},${PT+PH} Z`;
-          // Chart 2: TM vs MKT
-          const maxSeg = Math.max(...segBulan.map(d=>Math.max(d.tm,d.mkt)),1);
-          const C2Top = PH+PT+PB+10;
-          const toY2 = (v) => C2Top + (1 - v / (maxSeg * 1.2)) * PH;
-          const pathTM = segBulan.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY2(d.tm)}`).join(' ');
-          const pathMKT = segBulan.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY2(d.mkt)}`).join(' ');
-          const areaTM = pathTM + ` L${toX(segBulan.length-1)},${C2Top+PH} L${toX(0)},${C2Top+PH} Z`;
-          const areaMKT = pathMKT + ` L${toX(segBulan.length-1)},${C2Top+PH} L${toX(0)},${C2Top+PH} Z`;
-          const totalH = C2Top + PH + PB + 10;
-          return (
-            <div style={{ overflowX:'auto', padding:'8px 12px' }}>
-              <svg width={PW} height={totalH} style={{ display:'block', fontFamily:"'Inter',sans-serif", margin:'0 auto' }}>
-                <defs>
-                  <linearGradient id="gO" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#e63946" stopOpacity=".12"/><stop offset="100%" stopColor="#e63946" stopOpacity="0"/></linearGradient>
-                  <linearGradient id="gTM" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity=".1"/><stop offset="100%" stopColor="#2563eb" stopOpacity="0"/></linearGradient>
-                  <linearGradient id="gMK" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#9333ea" stopOpacity=".08"/><stop offset="100%" stopColor="#9333ea" stopOpacity="0"/></linearGradient>
-                </defs>
-
-                {/* ── Chart 1 Title ── */}
-                <text x={PL} y={10} fill="#6b7280" fontSize={9} fontWeight={700} textTransform="uppercase">OMZET & LABA</text>
-                {/* Y gridlines chart 1 */}
-                {[0,.5,1].map(f=>{const v=maxR*1.2*f,y=toY1(v);return(<g key={'a'+f}><line x1={PL} x2={PW-PR} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={PL-6} y={y+3} textAnchor="end" fill="#d1d5db" fontSize={7}>{rpM(Math.round(v)).replace('Rp ','')}</text></g>);})}
-                <path d={areaO} fill="url(#gO)"/>
-                <path d={pathO} fill="none" stroke="#e63946" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"/>
-                <path d={pathL} fill="none" stroke="#16a34a" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"/>
-                {progData.map((d,i)=>{
-                  const prevD = i>0?progData[i-1]:null;
-                  const growth = prevD&&prevD.rev>0?((d.rev-prevD.rev)/prevD.rev*100):null;
-                  const anc = progData.length===1?'middle':i===0?'start':i===progData.length-1?'end':'middle';
-                  return(<g key={'c1'+d.m}>
+          const makeChart = (title, lines, maxV, subtitle) => {
+            const toY = v => PT + (1 - v / (maxV * 1.2)) * PH;
+            return (
+              <svg width={halfW} height={PH+PT+PB} style={{ display:'block', fontFamily:"'Inter',sans-serif" }}>
+                <text x={PL} y={14} fill="#374151" fontSize={10} fontWeight={800}>{title}</text>
+                {subtitle&&<text x={halfW-PR} y={14} textAnchor="end" fill="#9ca3af" fontSize={8}>{subtitle}</text>}
+                {[0,.5,1].map(f=>{const v=maxV*1.2*f,y=toY(v);return(<g key={f}><line x1={PL} x2={halfW-PR} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={PL-6} y={y+3} textAnchor="end" fill="#d1d5db" fontSize={7}>{rpM(Math.round(v)).replace('Rp ','')}</text></g>);})}
+                {/* Area for first line */}
+                <path d={lines[0].data.map((v,i)=>`${i===0?'M':'L'}${toX(i)},${toY(v)}`).join(' ')+` L${toX(lines[0].data.length-1)},${PT+PH} L${toX(0)},${PT+PH} Z`} fill={lines[0].col} opacity={.08}/>
+                {/* Lines */}
+                {lines.map((ln,li)=>(
+                  <path key={li} d={ln.data.map((v,i)=>`${i===0?'M':'L'}${toX(i)},${toY(v)}`).join(' ')} fill="none" stroke={ln.col} strokeWidth={ln.bold?3:2.5} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={ln.dash||''}/>
+                ))}
+                {/* Dots + labels */}
+                {lines[0].data.map((_,i)=>{
+                  const anc = lines[0].data.length===1?'middle':i===0?'start':i===lines[0].data.length-1?'end':'middle';
+                  return(<g key={i}>
                     <line x1={toX(i)} x2={toX(i)} y1={PT} y2={PT+PH} stroke="#f5f5f5" strokeWidth={1}/>
-                    <circle cx={toX(i)} cy={toY1(d.rev)} r={6} fill="#e63946" stroke="#fff" strokeWidth={2}/>
-                    {badge(toX(i),toY1(d.rev)-16,rpM(d.rev),'rgba(230,57,70,.9)',anc)}
-                    <circle cx={toX(i)} cy={toY1(d.laba)} r={5} fill="#16a34a" stroke="#fff" strokeWidth={2}/>
-                    {badge(toX(i),toY1(d.laba)+18,rpM(d.laba),'rgba(22,163,74,.9)',anc)}
-                    <text x={toX(i)} y={PT+PH+14} textAnchor="middle" fill="#374151" fontSize={10} fontWeight={700}>{d.short}</text>
-                    {growth!==null&&<text x={toX(i)} y={PT+PH+26} textAnchor="middle" fill={growth>=0?'#16a34a':'#dc2626'} fontSize={8} fontWeight={700}>{growth>=0?'+':''}{growth.toFixed(0)}%</text>}
-                  </g>);
-                })}
-
-                {/* ── Divider ── */}
-                <line x1={PL} x2={PW-PR} y1={C2Top-6} y2={C2Top-6} stroke="#e2e4e8" strokeWidth={1} strokeDasharray="4,3"/>
-
-                {/* ── Chart 2 Title ── */}
-                <text x={PL} y={C2Top+4} fill="#6b7280" fontSize={9} fontWeight={700}>TM (TOKO) vs MARKETPLACE</text>
-                {/* Y gridlines chart 2 */}
-                {[0,.5,1].map(f=>{const v=maxSeg*1.2*f,y=toY2(v);return(<g key={'b'+f}><line x1={PL} x2={PW-PR} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={PL-6} y={y+3} textAnchor="end" fill="#d1d5db" fontSize={7}>{rpM(Math.round(v)).replace('Rp ','')}</text></g>);})}
-                <path d={areaTM} fill="url(#gTM)"/>
-                <path d={areaMKT} fill="url(#gMK)"/>
-                <path d={pathTM} fill="none" stroke="#2563eb" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"/>
-                <path d={pathMKT} fill="none" stroke="#9333ea" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6,3"/>
-                {segBulan.map((d,i)=>{
-                  const anc = segBulan.length===1?'middle':i===0?'start':i===segBulan.length-1?'end':'middle';
-                  return(<g key={'c2'+d.m}>
-                    <line x1={toX(i)} x2={toX(i)} y1={C2Top+8} y2={C2Top+PH} stroke="#f5f5f5" strokeWidth={1}/>
-                    <circle cx={toX(i)} cy={toY2(d.tm)} r={5} fill="#2563eb" stroke="#fff" strokeWidth={2}/>
-                    {badge(toX(i),toY2(d.tm)-16,`TM ${rpM(d.tm)}`,'rgba(37,99,235,.9)',anc)}
-                    <circle cx={toX(i)} cy={toY2(d.mkt)} r={5} fill="#9333ea" stroke="#fff" strokeWidth={2}/>
-                    {badge(toX(i),toY2(d.mkt)+18,`MKT ${rpM(d.mkt)}`,'rgba(147,51,234,.9)',anc)}
-                    <text x={toX(i)} y={C2Top+PH+14} textAnchor="middle" fill="#374151" fontSize={10} fontWeight={700}>{progData[i]?.short||''}</text>
+                    {lines.map((ln,li)=>(
+                      <g key={li}>
+                        <circle cx={toX(i)} cy={toY(ln.data[i])} r={li===0?6:5} fill={ln.col} stroke="#fff" strokeWidth={2}/>
+                        {badge(toX(i), toY(ln.data[i])+(li===0?-16:18), `${ln.label?ln.label+' ':''}${rpM(ln.data[i])}`, ln.col, anc)}
+                      </g>
+                    ))}
+                    <text x={toX(i)} y={PT+PH+14} textAnchor="middle" fill="#374151" fontSize={10} fontWeight={700}>{progData[i]?.short||''}</text>
+                    {i>0&&(()=>{const g=lines[0].data[i-1]>0?((lines[0].data[i]-lines[0].data[i-1])/lines[0].data[i-1]*100):0;return <text x={toX(i)} y={PT+PH+26} textAnchor="middle" fill={g>=0?'#16a34a':'#dc2626'} fontSize={8} fontWeight={700}>{g>=0?'+':''}{g.toFixed(0)}%</text>;})()}
                   </g>);
                 })}
               </svg>
+            );
+          };
+          const maxSeg = Math.max(...segBulan.map(d=>Math.max(d.tm,d.mkt)),1);
+          return (
+            <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?8:4, padding:'8px 12px', overflowX:'auto' }}>
+              {makeChart('Omzet & Laba','',
+                [
+                  {data:progData.map(d=>d.rev), col:'#e63946', bold:true, label:''},
+                  {data:progData.map(d=>d.laba), col:'#16a34a', label:''},
+                ], maxR)}
+              {makeChart('TM vs Marketplace','',
+                [
+                  {data:segBulan.map(d=>d.tm), col:'#2563eb', bold:true, label:'TM'},
+                  {data:segBulan.map(d=>d.mkt), col:'#9333ea', dash:'6,3', label:'MKT'},
+                ], maxSeg)}
             </div>
           );
         };
