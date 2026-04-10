@@ -870,6 +870,7 @@ function App() {
 function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT,targetOmzet={},exportCSV,generatePDF,isMobile=false,dbData=null}){
   const [chartView, setChartView] = useState('bulanan'); // 'bulanan' | 'mingguan'
   const [topMode, setTopMode] = useState('laba'); // 'laba' | 'laku' | 'omzet'
+  const [progView, setProgView] = useState('line'); // 'line' | 'bar' | 'pie'
   const q = getStats(0);
 
   // ── MONTHLY DATA ──────────────────────────────────────────
@@ -1318,68 +1319,200 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
         );
       })()}
 
-      {/* ── PROGRESS BULANAN: Trend line chart ── */}
-      {allBulans.length > 1 && (()=>{
+      {/* ── PROGRESS BULANAN: Multi-view chart ── */}
+      {allBulans.length > 0 && (()=>{
         const progData = allBulans.map(m => {
           const s = getStats(m);
-          return { m, label: (MNAME[m]||`Bulan ${m}`), rev: s.rev, laba: s.laba, hpp: s.hpp, count: s.count, margin: s.margin, days: s.days };
+          return { m, label: (MNAME[m]||`Bulan ${m}`), short: MSHORT[m]||`B${m}`, rev: s.rev, laba: s.laba, hpp: s.hpp, count: s.count, margin: s.margin, days: s.days };
         });
         const maxR = Math.max(...progData.map(d => d.rev), 1);
+        const totalRev = progData.reduce((s,d) => s + d.rev, 0);
 
-        return (
-          <div style={{ ...S.card, overflow: 'hidden', marginBottom: isMobile?12:18 }}>
-            <div style={{ ...S.cardHdr }}>
-              <span style={{ ...S.cardTitle }}>Progress Bulanan</span>
-              <div style={{ display: 'flex', gap: 14 }}>
-                {[['#e63946','● Omzet'],['#16a34a','● Laba']].map(([c,l])=>(
-                  <span key={l} style={{fontSize:10,fontWeight:600,color:c}}>{l}</span>
+        // ── LINE CHART ──
+        const renderLine = () => {
+          const PH = isMobile?160:220, PW = isMobile?320:Math.max(420, progData.length*180), PL = 58, PR = 60, PT = 30, PB = 40;
+          const xStep = progData.length > 1 ? (PW - PL - PR) / (progData.length - 1) : 0;
+          const toY = (v) => PT + (1 - v / (maxR * 1.2)) * PH;
+          const toX = (i) => PL + i * xStep;
+          const pathO = progData.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY(d.rev)}`).join(' ');
+          const pathL = progData.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY(d.laba)}`).join(' ');
+          const areaO = pathO + ` L${toX(progData.length-1)},${PT+PH} L${toX(0)},${PT+PH} Z`;
+          const areaL = pathL + ` L${toX(progData.length-1)},${PT+PH} L${toX(0)},${PT+PH} Z`;
+          return (
+            <div style={{ overflowX:'auto', padding:'8px 0' }}>
+              <svg width={PW} height={PH+PT+PB} style={{ display:'block', fontFamily:"'Inter',sans-serif", margin:'0 auto' }}>
+                {/* Y gridlines */}
+                {[0,.25,.5,.75,1].map(f => {
+                  const v = maxR*1.2*f, y = toY(v);
+                  return (<g key={f}><line x1={PL} x2={PW-PR} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={PL-8} y={y+3} textAnchor="end" fill="#c8ccd4" fontSize={8} fontWeight={500}>{rpM(Math.round(v)).replace('Rp ','')}</text></g>);
+                })}
+                {/* Area fills */}
+                <path d={areaO} fill="url(#gradOmzet)" opacity={0.15}/>
+                <path d={areaL} fill="url(#gradLaba)" opacity={0.12}/>
+                {/* Lines */}
+                <path d={pathO} fill="none" stroke="#e63946" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"/>
+                <path d={pathL} fill="none" stroke="#16a34a" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6,3"/>
+                {/* Dots & labels */}
+                {progData.map((d,i) => {
+                  const prevD = i>0?progData[i-1]:null;
+                  const growth = prevD&&prevD.rev>0?((d.rev-prevD.rev)/prevD.rev*100):null;
+                  // Smart label placement: omzet label top-right, laba label bottom-left to avoid overlap
+                  const oLabelY = toY(d.rev)-16;
+                  const lLabelY = toY(d.laba)+20;
+                  const anchor = progData.length===1?'middle':i===0?'start':i===progData.length-1?'end':'middle';
+                  return (<g key={d.m}>
+                    {/* Vertical guide */}
+                    <line x1={toX(i)} x2={toX(i)} y1={PT} y2={PT+PH} stroke="#f0f1f3" strokeWidth={1}/>
+                    {/* Omzet */}
+                    <circle cx={toX(i)} cy={toY(d.rev)} r={6} fill="#e63946" stroke="#fff" strokeWidth={2.5}/>
+                    <rect x={toX(i)-(anchor==='end'?75:anchor==='start'?-4:38)} y={oLabelY-12} width={78} height={17} rx={4} fill="rgba(230,57,70,.9)"/>
+                    <text x={toX(i)+(anchor==='end'?-36:anchor==='start'?35:0)} y={oLabelY} textAnchor="middle" fill="#fff" fontSize={10} fontWeight={700}>{rpM(d.rev)}</text>
+                    {/* Laba */}
+                    <circle cx={toX(i)} cy={toY(d.laba)} r={5} fill="#16a34a" stroke="#fff" strokeWidth={2}/>
+                    <rect x={toX(i)-(anchor==='end'?75:anchor==='start'?-4:38)} y={lLabelY-11} width={78} height={16} rx={4} fill="rgba(22,163,74,.9)"/>
+                    <text x={toX(i)+(anchor==='end'?-36:anchor==='start'?35:0)} y={lLabelY+1} textAnchor="middle" fill="#fff" fontSize={9} fontWeight={700}>{rpM(d.laba)}</text>
+                    {/* X label */}
+                    <text x={toX(i)} y={PT+PH+18} textAnchor="middle" fill="#374151" fontSize={11} fontWeight={700}>{d.short}</text>
+                    {/* Growth */}
+                    {growth!==null&&<text x={toX(i)} y={PT+PH+32} textAnchor="middle" fill={growth>=0?'#16a34a':'#dc2626'} fontSize={9} fontWeight={700}>{growth>=0?'+':''}{growth.toFixed(0)}%</text>}
+                  </g>);
+                })}
+                {/* Gradient defs */}
+                <defs>
+                  <linearGradient id="gradOmzet" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#e63946"/><stop offset="100%" stopColor="#e63946" stopOpacity="0"/></linearGradient>
+                  <linearGradient id="gradLaba" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#16a34a"/><stop offset="100%" stopColor="#16a34a" stopOpacity="0"/></linearGradient>
+                </defs>
+              </svg>
+            </div>
+          );
+        };
+
+        // ── BAR CHART ──
+        const renderBar = () => (
+          <div style={{ padding: isMobile?'8px 4px':'12px 12px' }}>
+            {progData.map((d, i) => {
+              const prevD = i>0?progData[i-1]:null;
+              const revGrowth = prevD&&prevD.rev>0?((d.rev-prevD.rev)/prevD.rev*100):null;
+              const revPct = (d.rev/(maxR*1.05))*100;
+              const labaPct = (d.laba/(maxR*1.05))*100;
+              return (
+                <div key={d.m} style={{ marginBottom: i<progData.length-1?16:0 }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                      <span style={{ fontFamily:"'Bricolage Grotesque',sans-serif", fontSize:isMobile?13:15, fontWeight:800, color:'#111827' }}>{d.label}</span>
+                      {revGrowth!==null&&<span style={{ fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:20, background:revGrowth>=0?'rgba(22,163,74,.1)':'rgba(220,38,38,.08)', color:revGrowth>=0?'#16a34a':'#dc2626' }}>{revGrowth>=0?'↑':'↓'}{Math.abs(revGrowth).toFixed(0)}%</span>}
+                    </div>
+                    <span style={{ fontSize:10, color:'#9ca3af' }}>{d.count} tx · {d.margin.toFixed(1)}%</span>
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:5 }}>
+                    <span style={{ width:isMobile?40:50, fontSize:9, fontWeight:600, color:'#e63946', textAlign:'right', flexShrink:0 }}>Omzet</span>
+                    <div style={{ flex:1, height:22, background:'#fef2f2', borderRadius:6, overflow:'hidden' }}>
+                      <div style={{ width:`${revPct}%`, height:'100%', background:'linear-gradient(90deg,#e63946,#f87171)', borderRadius:6, transition:'width .5s', display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:8 }}>
+                        <span style={{ fontSize:isMobile?9:10, fontWeight:800, color:'#fff', textShadow:'0 1px 2px rgba(0,0,0,.3)' }}>{rpM(d.rev)}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <span style={{ width:isMobile?40:50, fontSize:9, fontWeight:600, color:'#16a34a', textAlign:'right', flexShrink:0 }}>Laba</span>
+                    <div style={{ flex:1, height:18, background:'#f0fdf4', borderRadius:6, overflow:'hidden' }}>
+                      <div style={{ width:`${labaPct}%`, height:'100%', background:'linear-gradient(90deg,#16a34a,#4ade80)', borderRadius:6, transition:'width .5s', display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:8 }}>
+                        <span style={{ fontSize:isMobile?8:9, fontWeight:700, color:'#fff', textShadow:'0 1px 2px rgba(0,0,0,.3)' }}>{rpM(d.laba)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+
+        // ── PIE CHART ──
+        const renderPie = () => {
+          const PIE_R = isMobile?70:90, CX = isMobile?90:110, CY = isMobile?80:100;
+          const pieColors = ['#e63946','#f59e0b','#3b82f6','#8b5cf6','#06b6d4','#ec4899'];
+          let cumAngle = -90;
+          const slices = progData.map((d,i) => {
+            const pct = totalRev>0?(d.rev/totalRev):0;
+            const angle = pct*360;
+            const startAngle = cumAngle;
+            cumAngle += angle;
+            const endAngle = cumAngle;
+            const startRad = startAngle*Math.PI/180;
+            const endRad = endAngle*Math.PI/180;
+            const largeArc = angle>180?1:0;
+            const x1 = CX+PIE_R*Math.cos(startRad), y1 = CY+PIE_R*Math.sin(startRad);
+            const x2 = CX+PIE_R*Math.cos(endRad), y2 = CY+PIE_R*Math.sin(endRad);
+            const midRad = (startAngle+angle/2)*Math.PI/180;
+            const labelR = PIE_R+20;
+            const lx = CX+labelR*Math.cos(midRad), ly = CY+labelR*Math.sin(midRad);
+            return { ...d, pct, startAngle, endAngle, x1, y1, x2, y2, largeArc, lx, ly, col: pieColors[i%pieColors.length], midRad };
+          });
+          const SVGW = isMobile?300:440, SVGH = isMobile?190:220;
+          return (
+            <div style={{ display:'flex', flexDirection:isMobile?'column':'row', alignItems:'center', gap:isMobile?12:24, padding:isMobile?'12px 8px':'16px 20px' }}>
+              <svg width={SVGW} height={SVGH} style={{ flexShrink:0 }}>
+                {slices.map((s,i) => {
+                  if(s.pct<=0) return null;
+                  if(s.pct>=0.999) return <circle key={i} cx={CX} cy={CY} r={PIE_R} fill={s.col}/>;
+                  return (
+                    <g key={i}>
+                      <path d={`M${CX},${CY} L${s.x1},${s.y1} A${PIE_R},${PIE_R} 0 ${s.largeArc},1 ${s.x2},${s.y2} Z`} fill={s.col} stroke="#fff" strokeWidth={2}>
+                        <title>{s.label}: {rpM(s.rev)} ({(s.pct*100).toFixed(1)}%)</title>
+                      </path>
+                      {/* Label line + text */}
+                      {s.pct>0.05&&(
+                        <>
+                          <line x1={CX+(PIE_R-10)*Math.cos(s.midRad)} y1={CY+(PIE_R-10)*Math.sin(s.midRad)} x2={s.lx} y2={s.ly} stroke={s.col} strokeWidth={1.5} opacity={0.5}/>
+                          <text x={s.lx+(s.lx>CX?4:-4)} y={s.ly+4} textAnchor={s.lx>CX?'start':'end'} fill="#374151" fontSize={isMobile?9:10} fontWeight={700} fontFamily="'Inter',sans-serif">{s.short}</text>
+                          <text x={s.lx+(s.lx>CX?4:-4)} y={s.ly+16} textAnchor={s.lx>CX?'start':'end'} fill="#6b7280" fontSize={isMobile?8:9} fontFamily="'Inter',sans-serif">{(s.pct*100).toFixed(1)}%</text>
+                        </>
+                      )}
+                    </g>
+                  );
+                })}
+                {/* Center text */}
+                <circle cx={CX} cy={CY} r={PIE_R*0.55} fill="#fff"/>
+                <text x={CX} y={CY-6} textAnchor="middle" fill="#111827" fontSize={isMobile?11:13} fontWeight={800} fontFamily="'Bricolage Grotesque',sans-serif">Total</text>
+                <text x={CX} y={CY+10} textAnchor="middle" fill="#e63946" fontSize={isMobile?10:12} fontWeight={700} fontFamily="'Inter',sans-serif">{rpM(totalRev)}</text>
+              </svg>
+              {/* Legend */}
+              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                {slices.map((s,i) => (
+                  <div key={i} style={{ display:'flex', alignItems:'center', gap:10 }}>
+                    <div style={{ width:12, height:12, borderRadius:3, background:s.col, flexShrink:0 }}/>
+                    <div>
+                      <div style={{ fontSize:12, fontWeight:700, color:'#111827' }}>{s.label}</div>
+                      <div style={{ fontSize:10, color:'#6b7280' }}>{rpM(s.rev)} · Laba {rpM(s.laba)} · {s.margin.toFixed(1)}%</div>
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
-            <div style={{ padding: isMobile?'12px 10px':'16px 20px' }}>
-              {/* Chart bars for each month */}
-              {progData.map((d, i) => {
-                const prevD = i > 0 ? progData[i-1] : null;
-                const revGrowth = prevD && prevD.rev > 0 ? ((d.rev - prevD.rev) / prevD.rev * 100) : null;
-                const revPct = (d.rev / (maxR * 1.05)) * 100;
-                const labaPct = (d.laba / (maxR * 1.05)) * 100;
-                return (
-                  <div key={d.m} style={{ marginBottom: i < progData.length-1 ? 16 : 0 }}>
-                    {/* Month header */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontFamily: "'Bricolage Grotesque',sans-serif", fontSize: isMobile?13:15, fontWeight: 800, color: '#111827' }}>{d.label}</span>
-                        {revGrowth !== null && (
-                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: revGrowth >= 0 ? 'rgba(22,163,74,.1)' : 'rgba(220,38,38,.08)', color: revGrowth >= 0 ? '#16a34a' : '#dc2626' }}>
-                            {revGrowth >= 0 ? '↑' : '↓'}{Math.abs(revGrowth).toFixed(0)}%
-                          </span>
-                        )}
-                      </div>
-                      <span style={{ fontSize: 10, color: '#9ca3af' }}>{d.count} tx · {d.days} hari</span>
-                    </div>
-                    {/* Omzet bar */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <span style={{ width: isMobile?45:55, fontSize: 9, fontWeight: 600, color: '#e63946', textAlign: 'right', flexShrink: 0 }}>Omzet</span>
-                      <div style={{ flex: 1, height: 24, background: '#f8f0f0', borderRadius: 6, overflow: 'hidden', position: 'relative' }}>
-                        <div style={{ width: `${revPct}%`, height: '100%', background: 'linear-gradient(90deg, #e63946, #f87171)', borderRadius: 6, transition: 'width .5s', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 10 }}>
-                          <span style={{ fontSize: isMobile?9:11, fontWeight: 800, color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.2)' }}>{rpM(d.rev)}</span>
-                        </div>
-                      </div>
-                    </div>
-                    {/* Laba bar */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ width: isMobile?45:55, fontSize: 9, fontWeight: 600, color: '#16a34a', textAlign: 'right', flexShrink: 0 }}>Laba</span>
-                      <div style={{ flex: 1, height: 20, background: '#f0f8f0', borderRadius: 6, overflow: 'hidden', position: 'relative' }}>
-                        <div style={{ width: `${labaPct}%`, height: '100%', background: 'linear-gradient(90deg, #16a34a, #4ade80)', borderRadius: 6, transition: 'width .5s', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 8 }}>
-                          <span style={{ fontSize: isMobile?8:10, fontWeight: 700, color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.2)' }}>{rpM(d.laba)}</span>
-                        </div>
-                      </div>
-                      <span style={{ fontSize: 9, fontWeight: 700, color: '#7c3aed', flexShrink: 0 }}>{d.margin.toFixed(1)}%</span>
-                    </div>
-                  </div>
-                );
-              })}
+          );
+        };
+
+        return (
+          <div style={{ ...S.card, overflow:'hidden', marginBottom: isMobile?12:18 }}>
+            <div style={{ ...S.cardHdr }}>
+              <span style={{ ...S.cardTitle }}>Progress Bulanan</span>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                {/* Legend */}
+                {progView!=='pie'&&<div style={{ display:'flex', gap:10, marginRight:8 }}>
+                  {[['#e63946','Omzet'],['#16a34a','Laba']].map(([c,l])=>(
+                    <span key={l} style={{ fontSize:9, fontWeight:600, color:c, display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:2, background:c, display:'inline-block' }}/>{l}</span>
+                  ))}
+                </div>}
+                {/* View toggle */}
+                <div style={{ display:'flex', border:'1.5px solid #e2e4e8', borderRadius:8, overflow:'hidden' }}>
+                  {[['line','📈 Line'],['bar','📊 Bar'],['pie','🥧 Pie']].map(([v,l])=>(
+                    <button key={v} onClick={()=>setProgView(v)} style={{ fontSize:9, fontWeight:700, padding:'4px 10px', border:'none', cursor:'pointer', fontFamily:"'Inter',sans-serif", background:progView===v?'#b01c2e':'#fff', color:progView===v?'#fff':'#6b7280', transition:'all .15s' }}>{l}</button>
+                  ))}
+                </div>
+              </div>
             </div>
+            {progView==='line'&&renderLine()}
+            {progView==='bar'&&renderBar()}
+            {progView==='pie'&&renderPie()}
           </div>
         );
       })()}
