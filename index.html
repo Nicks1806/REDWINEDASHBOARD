@@ -1340,62 +1340,82 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
         const totalTM = segBulan.reduce((s,d)=>s+d.tm,0);
         const totalMKT = segBulan.reduce((s,d)=>s+d.mkt,0);
 
-        // ── LINE CHART (Omzet + Laba + TM + MKT) ──
+        // ── LINE CHART (2 charts: Omzet+Laba top, TM vs MKT bottom) ──
         const renderLine = () => {
-          const PH = isMobile?180:240, PW = isMobile?340:Math.max(480, progData.length*200), PL = 58, PR = 20, PT = 24, PB = 44;
+          const PH = isMobile?120:160, PW = isMobile?340:Math.max(480, progData.length*200), PL = 58, PR = 20, PT = 20, PB = 30;
           const xStep = progData.length > 1 ? (PW - PL - PR) / (progData.length - 1) : 0;
-          const toY = (v) => PT + (1 - v / (maxR * 1.2)) * PH;
           const toX = (i) => PL + i * xStep;
-          // Paths
-          const pathO = progData.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY(d.rev)}`).join(' ');
-          const pathL = progData.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY(d.laba)}`).join(' ');
-          const pathTM = segBulan.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY(d.tm)}`).join(' ');
-          const pathMKT = segBulan.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY(d.mkt)}`).join(' ');
-          const areaO = pathO + ` L${toX(progData.length-1)},${PT+PH} L${toX(0)},${PT+PH} Z`;
           // Badge helper
           const badge = (x,y,text,bg,anchor) => {
-            const w = text.length*6.5+12;
-            const bx = anchor==='start'?x+8:anchor==='end'?x-w-8:x-w/2;
-            return (<g><rect x={bx} y={y-10} width={w} height={16} rx={4} fill={bg}/><text x={bx+w/2} y={y+1} textAnchor="middle" fill="#fff" fontSize={9} fontWeight={700}>{text}</text></g>);
+            const w = text.length*6.2+14;
+            const bx = anchor==='start'?x+6:anchor==='end'?x-w-6:x-w/2;
+            return (<g><rect x={bx} y={y-10} width={w} height={16} rx={5} fill={bg} opacity={.92}/><text x={bx+w/2} y={y+1} textAnchor="middle" fill="#fff" fontSize={isMobile?8:9} fontWeight={700}>{text}</text></g>);
           };
+          // Chart 1: Omzet + Laba
+          const toY1 = (v) => PT + (1 - v / (maxR * 1.2)) * PH;
+          const pathO = progData.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY1(d.rev)}`).join(' ');
+          const pathL = progData.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY1(d.laba)}`).join(' ');
+          const areaO = pathO + ` L${toX(progData.length-1)},${PT+PH} L${toX(0)},${PT+PH} Z`;
+          // Chart 2: TM vs MKT
+          const maxSeg = Math.max(...segBulan.map(d=>Math.max(d.tm,d.mkt)),1);
+          const C2Top = PH+PT+PB+10;
+          const toY2 = (v) => C2Top + (1 - v / (maxSeg * 1.2)) * PH;
+          const pathTM = segBulan.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY2(d.tm)}`).join(' ');
+          const pathMKT = segBulan.map((d,i) => `${i===0?'M':'L'}${toX(i)},${toY2(d.mkt)}`).join(' ');
+          const areaTM = pathTM + ` L${toX(segBulan.length-1)},${C2Top+PH} L${toX(0)},${C2Top+PH} Z`;
+          const areaMKT = pathMKT + ` L${toX(segBulan.length-1)},${C2Top+PH} L${toX(0)},${C2Top+PH} Z`;
+          const totalH = C2Top + PH + PB + 10;
           return (
             <div style={{ overflowX:'auto', padding:'8px 12px' }}>
-              <svg width={PW} height={PH+PT+PB} style={{ display:'block', fontFamily:"'Inter',sans-serif", margin:'0 auto' }}>
+              <svg width={PW} height={totalH} style={{ display:'block', fontFamily:"'Inter',sans-serif", margin:'0 auto' }}>
                 <defs>
-                  <linearGradient id="gO" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#e63946" stopOpacity=".15"/><stop offset="100%" stopColor="#e63946" stopOpacity="0"/></linearGradient>
+                  <linearGradient id="gO" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#e63946" stopOpacity=".12"/><stop offset="100%" stopColor="#e63946" stopOpacity="0"/></linearGradient>
+                  <linearGradient id="gTM" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity=".1"/><stop offset="100%" stopColor="#2563eb" stopOpacity="0"/></linearGradient>
+                  <linearGradient id="gMK" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#9333ea" stopOpacity=".08"/><stop offset="100%" stopColor="#9333ea" stopOpacity="0"/></linearGradient>
                 </defs>
-                {/* Y gridlines */}
-                {[0,.25,.5,.75,1].map(f=>{const v=maxR*1.2*f,y=toY(v);return(<g key={f}><line x1={PL} x2={PW-PR} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={PL-8} y={y+3} textAnchor="end" fill="#c8ccd4" fontSize={8}>{rpM(Math.round(v)).replace('Rp ','')}</text></g>);})}
-                {/* Area */}
+
+                {/* ── Chart 1 Title ── */}
+                <text x={PL} y={10} fill="#6b7280" fontSize={9} fontWeight={700} textTransform="uppercase">OMZET & LABA</text>
+                {/* Y gridlines chart 1 */}
+                {[0,.5,1].map(f=>{const v=maxR*1.2*f,y=toY1(v);return(<g key={'a'+f}><line x1={PL} x2={PW-PR} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={PL-6} y={y+3} textAnchor="end" fill="#d1d5db" fontSize={7}>{rpM(Math.round(v)).replace('Rp ','')}</text></g>);})}
                 <path d={areaO} fill="url(#gO)"/>
-                {/* TM + MKT lines (thinner, behind) */}
-                <path d={pathTM} fill="none" stroke="#2563eb" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" opacity={0.7}/>
-                <path d={pathMKT} fill="none" stroke="#9333ea" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6,3" opacity={0.7}/>
-                {/* Omzet + Laba lines (bold, front) */}
                 <path d={pathO} fill="none" stroke="#e63946" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"/>
                 <path d={pathL} fill="none" stroke="#16a34a" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"/>
-                {/* Data points */}
                 {progData.map((d,i)=>{
-                  const sb = segBulan[i];
                   const prevD = i>0?progData[i-1]:null;
                   const growth = prevD&&prevD.rev>0?((d.rev-prevD.rev)/prevD.rev*100):null;
                   const anc = progData.length===1?'middle':i===0?'start':i===progData.length-1?'end':'middle';
-                  return(<g key={d.m}>
-                    <line x1={toX(i)} x2={toX(i)} y1={PT} y2={PT+PH} stroke="#f0f1f3" strokeWidth={1}/>
-                    {/* TM dot */}
-                    <circle cx={toX(i)} cy={toY(sb.tm)} r={4} fill="#2563eb" stroke="#fff" strokeWidth={1.5}/>
-                    {badge(toX(i),toY(sb.tm)-14,`TM ${rpM(sb.tm)}`,'rgba(37,99,235,.85)',anc)}
-                    {/* MKT dot */}
-                    <circle cx={toX(i)} cy={toY(sb.mkt)} r={4} fill="#9333ea" stroke="#fff" strokeWidth={1.5}/>
-                    {badge(toX(i),toY(sb.mkt)+20,`MKT ${rpM(sb.mkt)}`,'rgba(147,51,234,.85)',anc)}
-                    {/* Omzet dot */}
-                    <circle cx={toX(i)} cy={toY(d.rev)} r={6} fill="#e63946" stroke="#fff" strokeWidth={2.5}/>
-                    {badge(toX(i),toY(d.rev)-32,rpM(d.rev),'rgba(230,57,70,.92)',anc)}
-                    {/* Laba dot */}
-                    <circle cx={toX(i)} cy={toY(d.laba)} r={5} fill="#16a34a" stroke="#fff" strokeWidth={2}/>
-                    {/* X label */}
-                    <text x={toX(i)} y={PT+PH+18} textAnchor="middle" fill="#374151" fontSize={11} fontWeight={700}>{d.short}</text>
-                    {growth!==null&&<text x={toX(i)} y={PT+PH+32} textAnchor="middle" fill={growth>=0?'#16a34a':'#dc2626'} fontSize={9} fontWeight={700}>{growth>=0?'+':''}{growth.toFixed(0)}%</text>}
+                  return(<g key={'c1'+d.m}>
+                    <line x1={toX(i)} x2={toX(i)} y1={PT} y2={PT+PH} stroke="#f5f5f5" strokeWidth={1}/>
+                    <circle cx={toX(i)} cy={toY1(d.rev)} r={6} fill="#e63946" stroke="#fff" strokeWidth={2}/>
+                    {badge(toX(i),toY1(d.rev)-16,rpM(d.rev),'rgba(230,57,70,.9)',anc)}
+                    <circle cx={toX(i)} cy={toY1(d.laba)} r={5} fill="#16a34a" stroke="#fff" strokeWidth={2}/>
+                    {badge(toX(i),toY1(d.laba)+18,rpM(d.laba),'rgba(22,163,74,.9)',anc)}
+                    <text x={toX(i)} y={PT+PH+14} textAnchor="middle" fill="#374151" fontSize={10} fontWeight={700}>{d.short}</text>
+                    {growth!==null&&<text x={toX(i)} y={PT+PH+26} textAnchor="middle" fill={growth>=0?'#16a34a':'#dc2626'} fontSize={8} fontWeight={700}>{growth>=0?'+':''}{growth.toFixed(0)}%</text>}
+                  </g>);
+                })}
+
+                {/* ── Divider ── */}
+                <line x1={PL} x2={PW-PR} y1={C2Top-6} y2={C2Top-6} stroke="#e2e4e8" strokeWidth={1} strokeDasharray="4,3"/>
+
+                {/* ── Chart 2 Title ── */}
+                <text x={PL} y={C2Top+4} fill="#6b7280" fontSize={9} fontWeight={700}>TM (TOKO) vs MARKETPLACE</text>
+                {/* Y gridlines chart 2 */}
+                {[0,.5,1].map(f=>{const v=maxSeg*1.2*f,y=toY2(v);return(<g key={'b'+f}><line x1={PL} x2={PW-PR} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={PL-6} y={y+3} textAnchor="end" fill="#d1d5db" fontSize={7}>{rpM(Math.round(v)).replace('Rp ','')}</text></g>);})}
+                <path d={areaTM} fill="url(#gTM)"/>
+                <path d={areaMKT} fill="url(#gMK)"/>
+                <path d={pathTM} fill="none" stroke="#2563eb" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"/>
+                <path d={pathMKT} fill="none" stroke="#9333ea" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6,3"/>
+                {segBulan.map((d,i)=>{
+                  const anc = segBulan.length===1?'middle':i===0?'start':i===segBulan.length-1?'end':'middle';
+                  return(<g key={'c2'+d.m}>
+                    <line x1={toX(i)} x2={toX(i)} y1={C2Top+8} y2={C2Top+PH} stroke="#f5f5f5" strokeWidth={1}/>
+                    <circle cx={toX(i)} cy={toY2(d.tm)} r={5} fill="#2563eb" stroke="#fff" strokeWidth={2}/>
+                    {badge(toX(i),toY2(d.tm)-16,`TM ${rpM(d.tm)}`,'rgba(37,99,235,.9)',anc)}
+                    <circle cx={toX(i)} cy={toY2(d.mkt)} r={5} fill="#9333ea" stroke="#fff" strokeWidth={2}/>
+                    {badge(toX(i),toY2(d.mkt)+18,`MKT ${rpM(d.mkt)}`,'rgba(147,51,234,.9)',anc)}
+                    <text x={toX(i)} y={C2Top+PH+14} textAnchor="middle" fill="#374151" fontSize={10} fontWeight={700}>{progData[i]?.short||''}</text>
                   </g>);
                 })}
               </svg>
@@ -1453,7 +1473,7 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
               const sa = cum; cum+=ang;
               const sr = sa*Math.PI/180, er = cum*Math.PI/180;
               const mr = (sa+ang/2)*Math.PI/180;
-              return {...d, pct, sa, x1:cx+r*Math.cos(sr), y1:cy+r*Math.sin(sr), x2:cx+r*Math.cos(er), y2:cy+r*Math.sin(er), la:ang>180?1:0, mr, lx:cx+(r+22)*Math.cos(mr), ly:cy+(r+22)*Math.sin(mr)};
+              return {...d, pct, sa, x1:cx+r*Math.cos(sr), y1:cy+r*Math.sin(sr), x2:cx+r*Math.cos(er), y2:cy+r*Math.sin(er), la:ang>180?1:0, mr, lx:cx+(r+28)*Math.cos(mr), ly:cy+(r+28)*Math.sin(mr)};
             });
             return (<g>
               {slices.map((s,i)=>{
@@ -1471,10 +1491,10 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
               <text x={cx} y={cy+10} textAnchor="middle" fill="#6b7280" fontSize={isMobile?8:10} fontWeight={600}>{subtitle}</text>
             </g>);
           };
-          const P1CX = isMobile?100:130, P2CX = isMobile?100:380, PCY = isMobile?100:110;
-          const PR = isMobile?65:85;
-          const SVGW = isMobile?220:520, SVGH = isMobile?210:240;
-          const tmMktData = [{name:'TM (Toko)',val:totalTM,col:'#2563eb'},{name:'Marketplace',val:totalMKT,col:'#9333ea'}];
+          const P1CX = isMobile?110:150, P2CX = isMobile?110:440, PCY = isMobile?110:120;
+          const PR = isMobile?65:80;
+          const SVGW = isMobile?240:600, SVGH = isMobile?230:260;
+          const tmMktData = [{name:'TM (Toko)',val:totalTM,col:'#2563eb'},{name:'MKT (Online)',val:totalMKT,col:'#9333ea'}];
           const monthColors = ['#e63946','#f59e0b','#3b82f6','#8b5cf6','#06b6d4','#ec4899'];
           const monthData = progData.map((d,i)=>({name:d.short,val:d.rev,col:monthColors[i%6]}));
           return (
