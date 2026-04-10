@@ -1383,7 +1383,7 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
           };
           const maxSeg = Math.max(...segBulan.map(d=>Math.max(d.tm,d.mkt)),1);
           return (
-            <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?8:4, padding:'8px 12px', overflowX:'auto' }}>
+            <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?12:20, padding:'12px 16px', overflowX:'auto', justifyContent:'center' }}>
               {makeChart('Omzet & Laba','',
                 [
                   {data:progData.map(d=>d.rev), col:'#e63946', bold:true, label:''},
@@ -1466,16 +1466,16 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
               <text x={cx} y={cy+10} textAnchor="middle" fill="#6b7280" fontSize={isMobile?8:10} fontWeight={600}>{subtitle}</text>
             </g>);
           };
-          const P1CX = isMobile?110:150, P2CX = isMobile?110:440, PCY = isMobile?110:120;
-          const PR = isMobile?65:80;
-          const SVGW = isMobile?240:600, SVGH = isMobile?230:260;
+          const P1CX = isMobile?120:170, P2CX = isMobile?120:520, PCY = isMobile?120:130;
+          const PR = isMobile?65:85;
+          const SVGW = isMobile?250:700, SVGH = isMobile?250:280;
           const tmMktData = [{name:'TM (Toko)',val:totalTM,col:'#2563eb'},{name:'MKT (Online)',val:totalMKT,col:'#9333ea'}];
           const monthColors = ['#e63946','#f59e0b','#3b82f6','#8b5cf6','#06b6d4','#ec4899'];
           const monthData = progData.map((d,i)=>({name:d.short,val:d.rev,col:monthColors[i%6]}));
           return (
-            <div style={{ padding:isMobile?'12px 8px':'16px 20px' }}>
+            <div style={{ padding:isMobile?'16px 8px':'24px 20px' }}>
               {isMobile?(
-                <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:16 }}>
+                <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:20 }}>
                   <svg width={SVGW} height={SVGH}>{makePie(tmMktData, P1CX, PCY, PR, 'Channel', rpM(totalRev))}</svg>
                   <svg width={SVGW} height={SVGH}>{makePie(monthData, P1CX, PCY, PR, 'Bulanan', rpM(totalRev))}</svg>
                 </div>
