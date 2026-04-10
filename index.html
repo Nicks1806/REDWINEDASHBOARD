@@ -9,6 +9,8 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Inter', sans-serif; background: #f4f5f7; color: #111827; }
@@ -153,8 +155,18 @@ function App() {
   const [uploadRows, setUploadRows] = useState(null);
   const [uploadErr, setUploadErr] = useState('');
   const [uploadWarn, setUploadWarn] = useState(null);
+  const [uploadSeg, setUploadSeg] = useState('auto');
+  const [dragOver, setDragOver] = useState(false);
   const [segFilter, setSegFilter] = useState('all'); // 'all' | 'TM' | 'MKT'
+  const [isMobile, setIsMobile] = useState(typeof window!=='undefined'&&window.innerWidth<768);
   const saveTimer = useRef(null);
+
+  // ── RESPONSIVE LISTENER ──
+  useEffect(()=>{
+    const onResize=()=>setIsMobile(window.innerWidth<768);
+    window.addEventListener('resize',onResize);
+    return ()=>window.removeEventListener('resize',onResize);
+  },[]);
   const subRef = useRef(null);
 
   // ── LOAD from Supabase ──
@@ -410,6 +422,11 @@ function App() {
         const isFormatB = fi(['nama barang','nama_barang','name','product name','product_name']) >= 0
           && fi(['tgl','tanggal']) < 0;
 
+        // Auto-detect segment from headers
+        const hasShopeeCol = hdr.some(h=>h.includes('shopee')||h.includes('user shopee'));
+        const hasBuyerCol = fi(['nama user shopee','nama user','buyer','username']);
+        if(uploadSeg==='auto' && (hasShopeeCol||isFormatB)) setUploadSeg('MKT');
+
         const rows = [];
         let skipped = 0;
 
@@ -450,13 +467,13 @@ function App() {
               qty,
               harga: Math.round(harga),
               ket: nama, // store full nama as keterangan
-              segment: 'MKT', // Format Jubelio = Marketplace
+              segment: uploadSeg!=='auto'?uploadSeg:'MKT', // Format Jubelio = Marketplace
               _fromNama: !kode, // flag: kode extracted from nama, may need review
             });
           });
         } else {
           // Format A: standar dengan kolom tgl, kode, harga
-          const C={tgl:fi(['tgl','tanggal']),kode:fi(['kode','kode_produk','product']),warna:fi(['warna','color']),size:fi(['size','ukuran']),qty:fi(['qty','jumlah']),harga:fi(['harga','harga_jual','price','amount']),ket:fi(['ket','keterangan','catatan']),seg:fi(['segment','segmen','channel'])};
+          const C={tgl:fi(['tgl','tanggal','tgl transaksi']),kode:fi(['kode','kode_produk','product','kode barang']),warna:fi(['warna','color']),size:fi(['size','ukuran']),qty:fi(['qty','jumlah','pcs']),harga:fi(['harga','harga_jual','price','amount']),ket:fi(['ket','keterangan','catatan']),seg:fi(['segment','segmen','channel']),buyer:hasBuyerCol>=0?hasBuyerCol:fi(['nama user shopee','nama user','buyer','username'])};
           if(C.tgl<0||C.kode<0||C.harga<0){setUploadErr('Kolom tgl/kode/harga tidak ditemukan.\nAtau gunakan format: Nama Barang, QTY, amount');return;}
           const validErrs = [];
           const dupeCheck = {};
@@ -476,8 +493,9 @@ function App() {
             const dk = `${tgl}|${kode}|${harga}`;
             dupeCheck[dk] = (dupeCheck[dk]||0)+1;
             const segRaw = C.seg>=0 ? (cols[C.seg]||'').trim().toUpperCase() : '';
-            const segment = segRaw.includes('MKT')||segRaw.includes('MARKETPLACE')||segRaw.includes('ONLINE') ? 'MKT' : 'TM';
-            rows.push({tgl,kode,warna:(C.warna>=0?cols[C.warna]:'')?.trim()||'',size:(C.size>=0?cols[C.size]:'')?.trim()||'',qty,harga,ket:(C.ket>=0?cols[C.ket]:'')?.trim()||'',segment});
+            const segment = uploadSeg!=='auto'?uploadSeg:(segRaw.includes('MKT')||segRaw.includes('MARKETPLACE')||segRaw.includes('ONLINE') ? 'MKT' : 'TM');
+            const buyer = C.buyer>=0?(cols[C.buyer]||'').trim():'';
+            rows.push({tgl,kode,warna:(C.warna>=0?cols[C.warna]:'')?.trim()||'',size:(C.size>=0?cols[C.size]:'')?.trim()||'',qty,harga,ket:(C.ket>=0?cols[C.ket]:'')?.trim()||'',segment,buyer});
           });
           const dupeKeys = Object.entries(dupeCheck).filter(([,v])=>v>1);
           if(validErrs.length>0) { setUploadErr('❌ '+validErrs.slice(0,3).join(' | ')+(validErrs.length>3?` (+${validErrs.length-3} lainnya)`:'')); return; }
@@ -527,6 +545,102 @@ function App() {
     showToastMsg(`📥 Export ${src.length} transaksi berhasil`);
   };
 
+  // ── PDF EXPORT ──
+  const generatePDF = (bulan) => {
+    if(typeof window.jspdf==='undefined'){showToastMsg('PDF library belum dimuat');return;}
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('p','mm','a4');
+    const s = getStats(bulan);
+    const monthName = MNAME[bulan]||`Bulan ${bulan}`;
+    const src = TX.filter(t=>t.bulan===bulan);
+
+    // Header
+    doc.setFontSize(18);
+    doc.setFont('helvetica','bold');
+    doc.text('Laporan Penjualan', 14, 20);
+    doc.setFontSize(12);
+    doc.setFont('helvetica','normal');
+    doc.text(`${monthName} 2026 - TM3 Ellen (RedWine)`, 14, 28);
+    doc.setDrawColor(176,28,46);
+    doc.setLineWidth(0.5);
+    doc.line(14, 32, 196, 32);
+
+    // Summary
+    doc.setFontSize(10);
+    doc.setFont('helvetica','bold');
+    doc.text('Ringkasan', 14, 40);
+    const tmTx = src.filter(t=>(t.segment||'TM')==='TM');
+    const mktTx = src.filter(t=>(t.segment||'TM')==='MKT');
+    const tmRev = tmTx.reduce((a,t)=>a+t.harga*t.qty,0);
+    const mktRev = mktTx.reduce((a,t)=>a+t.harga*t.qty,0);
+
+    const summaryData = [
+      ['Omzet', `Rp ${(s.rev/1e6).toFixed(1)}jt`],
+      ['HPP', `Rp ${(s.hpp/1e6).toFixed(1)}jt`],
+      ['Laba Kotor', `Rp ${(s.laba/1e6).toFixed(1)}jt`],
+      ['Margin', `${s.margin.toFixed(1)}%`],
+      ['Transaksi', `${s.count}`],
+      ['Hari Aktif', `${s.days} hari`],
+      ['TM (Toko)', `${tmTx.length} tx - Rp ${(tmRev/1e6).toFixed(1)}jt`],
+      ['Marketplace', `${mktTx.length} tx - Rp ${(mktRev/1e6).toFixed(1)}jt`],
+    ];
+    doc.autoTable({
+      startY: 44,
+      head: [['Metric', 'Nilai']],
+      body: summaryData,
+      theme: 'grid',
+      headStyles: {fillColor:[176,28,46]},
+      margin: {left:14,right:14},
+      styles: {fontSize:9},
+    });
+
+    // Top 10 Produk
+    const prodMap = {};
+    src.forEach(t=>{const e=getEntry(t);const k=e?e.kode:t.kode;if(!prodMap[k])prodMap[k]={kode:k,qty:0,rev:0,laba:0};prodMap[k].qty+=t.qty;prodMap[k].rev+=t.harga*t.qty;const hpp=e?e.hpp*t.qty:0;prodMap[k].laba+=(t.harga*t.qty)-hpp;});
+    const topProds = Object.values(prodMap).sort((a,b)=>b.rev-a.rev).slice(0,10);
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica','bold');
+    const topY = doc.lastAutoTable.finalY + 10;
+    doc.text('Top 10 Produk', 14, topY);
+    doc.autoTable({
+      startY: topY + 4,
+      head: [['#','Kode','Qty','Omzet','Laba']],
+      body: topProds.map((p,i)=>[i+1,p.kode,p.qty,`Rp ${(p.rev/1e3).toFixed(0)}rb`,`Rp ${(p.laba/1e3).toFixed(0)}rb`]),
+      theme: 'striped',
+      headStyles: {fillColor:[176,28,46]},
+      margin: {left:14,right:14},
+      styles: {fontSize:8},
+    });
+
+    // Detail Transaksi
+    const detY = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(10);
+    doc.setFont('helvetica','bold');
+    doc.text(`Detail Transaksi (${src.length})`, 14, detY);
+    doc.autoTable({
+      startY: detY + 4,
+      head: [['Tgl','Kode','Warna','Size','Qty','Harga','Segment']],
+      body: src.slice(0,200).map(t=>[t.tgl,t.kode,t.warna||'-',t.size||'-',t.qty,`Rp ${t.harga.toLocaleString('id-ID')}`,t.segment||'TM']),
+      theme: 'striped',
+      headStyles: {fillColor:[176,28,46]},
+      margin: {left:14,right:14},
+      styles: {fontSize:7},
+    });
+
+    // Footer
+    const pageCount = doc.internal.getNumberOfPages();
+    for(let i=1;i<=pageCount;i++){
+      doc.setPage(i);
+      doc.setFontSize(7);
+      doc.setFont('helvetica','normal');
+      doc.text(`RedWine Dashboard - Generated ${new Date().toLocaleDateString('id-ID')} - Page ${i}/${pageCount}`, 14, 290);
+    }
+
+    doc.save(`Laporan_${monthName}_2026_TM3.pdf`);
+    showToastMsg(`📄 PDF ${monthName} berhasil di-download`);
+  };
+
   const doUpload = () => {
     if(!uploadName.trim()||!uploadRows?.length)return;
     // Snapshot sebelum import data baru
@@ -560,38 +674,34 @@ function App() {
   return (
     <div style={S.wrap}>
                   {/* HEADER */}
-      <div style={S.hdr}>
+      <div style={{...S.hdr,height:isMobile?'auto':58,padding:isMobile?'10px 14px':'0 22px',flexWrap:isMobile?'wrap':'nowrap',gap:isMobile?8:0}}>
         <div style={S.brand}>
-          <img src={`data:image/jpeg;base64,${LOGO_B64}`} style={{height:36,width:'auto',borderRadius:7,flexShrink:0}} alt="RedWine"/>
-          <div style={{width:1,height:22,background:'#c8ccd4',flexShrink:0}}/>
+          <img src={`data:image/jpeg;base64,${LOGO_B64}`} style={{height:isMobile?28:36,width:'auto',borderRadius:7,flexShrink:0}} alt="RedWine"/>
+          {!isMobile&&<div style={{width:1,height:22,background:'#c8ccd4',flexShrink:0}}/>}
           <div style={{display:'flex',flexDirection:'column',gap:2}}>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <span style={{fontFamily:"'Bricolage Grotesque',sans-serif",fontSize:13,fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',color:'#111827'}}>Dashboard Penjualan</span>
-              <span style={{fontSize:9,fontWeight:700,padding:'2px 8px',borderRadius:20,background:'#b01c2e',color:'#fff',letterSpacing:'.04em',fontFamily:"'JetBrains Mono',monospace"}}>v1.3</span>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <span style={{fontFamily:"'Bricolage Grotesque',sans-serif",fontSize:isMobile?11:13,fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',color:'#111827'}}>Dashboard Penjualan</span>
+              <span style={{fontSize:8,fontWeight:700,padding:'2px 6px',borderRadius:20,background:'#b01c2e',color:'#fff',letterSpacing:'.04em',fontFamily:"'JetBrains Mono',monospace"}}>v1.3</span>
             </div>
-            <div style={{fontSize:10,color:'#6b7280',display:'flex',alignItems:'center',gap:6}}>
+            <div style={{fontSize:9,color:'#6b7280',display:'flex',alignItems:'center',gap:5}}>
               <span style={{width:5,height:5,borderRadius:'50%',background:online?'#16a34a':'#dc2626',display:'inline-block',boxShadow:online?'0 0 5px #16a34a':'0 0 5px #dc2626'}}/>
-              <span>{online?'Online · Real-time':'Offline'} · {TX.length.toLocaleString('id-ID')} tx{syncing?' · Menyimpan...':lastSync?` · ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'})}`:''}</span>
+              <span>{online?'Online':'Offline'} · {TX.length.toLocaleString('id-ID')} tx{syncing?' · Saving...':''}</span>
             </div>
           </div>
         </div>
-        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-          <button
-            style={{...S.btn(false),gap:6,padding:'6px 13px',fontSize:11}}
-            onClick={()=>setShowUpload(true)}>
-            <span style={{fontSize:14,lineHeight:1}}>＋</span> Tambah Bulan
+        <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+          <button style={{...S.btn(false),gap:4,padding:isMobile?'5px 10px':'6px 13px',fontSize:isMobile?10:11}} onClick={()=>setShowUpload(true)}>
+            ＋ {isMobile?'Import':'Tambah Bulan'}
           </button>
-          <button
-            style={{...S.btn(false),gap:6,padding:'6px 13px',fontSize:11,background:warnCount?'rgba(217,119,6,.1)':'#f0f1f3',border:`1px solid ${warnCount?'#d97706':'#c8ccd4'}`,color:warnCount?'#d97706':'#6b7280'}}            onClick={()=>setShowFix(true)}>
-            {warnCount?`⚠ ${warnCount} Koreksi`:'✓ Kode Bersih'}
+          <button style={{...S.btn(false),gap:4,padding:isMobile?'5px 10px':'6px 13px',fontSize:isMobile?10:11,background:warnCount?'rgba(217,119,6,.1)':'#f0f1f3',border:`1px solid ${warnCount?'#d97706':'#c8ccd4'}`,color:warnCount?'#d97706':'#6b7280'}} onClick={()=>setShowFix(true)}>
+            {warnCount?`⚠ ${warnCount}`:'✓'}
           </button>
-          <button style={{...S.btn(false),gap:6,padding:'6px 13px',fontSize:11,background:'rgba(96,165,250,.08)',border:'1px solid rgba(96,165,250,.2)',color:'#2563eb'}} onClick={()=>exportCSV(0)} title="Export semua tx Q1 ke CSV">
+          <button style={{...S.btn(false),gap:4,padding:isMobile?'5px 10px':'6px 13px',fontSize:isMobile?10:11,background:'rgba(96,165,250,.08)',border:'1px solid rgba(96,165,250,.2)',color:'#2563eb'}} onClick={()=>exportCSV(0)}>
             ↓ Export
           </button>
-          <button style={{...S.btn(false),gap:6,padding:'6px 13px',fontSize:11,background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.2)',color:'#d97706'}} onClick={()=>setShowTarget(true)} title="Set target omzet bulanan">
+          <button style={{...S.btn(false),gap:4,padding:isMobile?'5px 10px':'6px 13px',fontSize:isMobile?10:11,background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.2)',color:'#d97706'}} onClick={()=>setShowTarget(true)}>
             ◎ Target
           </button>
-
         </div>
       </div>
       {/* NAV */}
@@ -602,18 +712,18 @@ function App() {
       </div>
 
       {/* SEGMENT FILTER */}
-      {page!=='database'&&<div style={{display:'flex',gap:6,padding:'8px 20px',background:'#fafafa',borderBottom:'1px solid #e5e7eb'}}>
+      {page!=='database'&&<div style={{display:'flex',gap:6,padding:isMobile?'6px 12px':'8px 20px',background:'#fafafa',borderBottom:'1px solid #e5e7eb',overflowX:'auto'}}>
         {[['all','Semua','#6b7280'],['TM','🏪 TM (Toko)','#2563eb'],['MKT','🛒 Marketplace','#9333ea']].map(([k,l,c])=>(
           <button key={k} onClick={()=>setSegFilter(k)} style={{padding:'5px 14px',fontSize:12,fontWeight:segFilter===k?700:500,borderRadius:20,border:`1.5px solid ${segFilter===k?c:'#d1d5db'}`,background:segFilter===k?c:'#fff',color:segFilter===k?'#fff':'#374151',cursor:'pointer',transition:'all .15s'}}>{l}</button>
         ))}
       </div>}
 
-      <div style={S.page}>
+      <div style={{...S.page,padding:isMobile?'12px 10px':'18px 22px'}}>
         {/* OVERVIEW */}
-        {page==='overview'&&<OverviewPage TX={TX} allBulans={allBulans} getStats={getStats} getEntry={getEntry} rpM={rpM} rp={rp} S={S} MNAME={MNAME} MCOL={MCOL} MSHORT={MSHORT} targetOmzet={targetOmzet} exportCSV={exportCSV}/>}
-        {page==='bulanan'&&<BulananPage TX={TX} monthFilter={monthFilter} setMonthFilter={setMonthFilter} allBulans={allBulans} getStats={getStats} getEntry={getEntry} getStatus={getStatus} applyFix={applyFix} editTx={editTx} deleteTx={deleteTx} exportCSV={exportCSV} targetOmzet={targetOmzet} rp={rp} rpM={rpM} S={S} MNAME={MNAME} MSHORT={MSHORT} MCOL={MCOL}/>}
-        {page==='transactions'&&<TxPage TX={TX} txFilter={txFilter} setTxFilter={setTxFilter} search={search} setSearch={setSearch} getEntry={getEntry} getStatus={getStatus} applyFix={applyFix} editHarga={editHarga} editTx={editTx} deleteTx={deleteTx} rp={rp} S={S} MSHORT={MSHORT}/>}
-        {page==='database'&&dbData&&<DatabasePage dbData={dbData} setDbData={setDbData} saveDbData={saveDbData} dbSearch={dbSearch} setDbSearch={setDbSearch} showDbImport={showDbImport} setShowDbImport={setShowDbImport} showAddProd={showAddProd} setShowAddProd={setShowAddProd} dbImportRows={dbImportRows} setDbImportRows={setDbImportRows} dbImportErr={dbImportErr} setDbImportErr={setDbImportErr} newProd={newProd} setNewProd={setNewProd} dbHistory={dbHistory} setDbHistory={setDbHistory} showHistory={showHistory} setShowHistory={setShowHistory} loadDbHistory={loadDbHistory} restoreDbVersion={restoreDbVersion} dbVersion={dbVersion} setDbVersion={setDbVersion} rp={rp} S={S}/>}
+        {page==='overview'&&<OverviewPage TX={TX} allBulans={allBulans} getStats={getStats} getEntry={getEntry} rpM={rpM} rp={rp} S={S} MNAME={MNAME} MCOL={MCOL} MSHORT={MSHORT} targetOmzet={targetOmzet} exportCSV={exportCSV} generatePDF={generatePDF} isMobile={isMobile} dbData={dbData}/>}
+        {page==='bulanan'&&<BulananPage TX={TX} monthFilter={monthFilter} setMonthFilter={setMonthFilter} allBulans={allBulans} getStats={getStats} getEntry={getEntry} getStatus={getStatus} applyFix={applyFix} editTx={editTx} deleteTx={deleteTx} exportCSV={exportCSV} generatePDF={generatePDF} targetOmzet={targetOmzet} rp={rp} rpM={rpM} S={S} MNAME={MNAME} MSHORT={MSHORT} MCOL={MCOL} isMobile={isMobile}/>}
+        {page==='transactions'&&<TxPage TX={TX} txFilter={txFilter} setTxFilter={setTxFilter} search={search} setSearch={setSearch} getEntry={getEntry} getStatus={getStatus} applyFix={applyFix} editHarga={editHarga} editTx={editTx} deleteTx={deleteTx} rp={rp} S={S} MSHORT={MSHORT} isMobile={isMobile}/>}
+        {page==='database'&&dbData&&<DatabasePage dbData={dbData} setDbData={setDbData} saveDbData={saveDbData} dbSearch={dbSearch} setDbSearch={setDbSearch} showDbImport={showDbImport} setShowDbImport={setShowDbImport} showAddProd={showAddProd} setShowAddProd={setShowAddProd} dbImportRows={dbImportRows} setDbImportRows={setDbImportRows} dbImportErr={dbImportErr} setDbImportErr={setDbImportErr} newProd={newProd} setNewProd={setNewProd} dbHistory={dbHistory} setDbHistory={setDbHistory} showHistory={showHistory} setShowHistory={setShowHistory} loadDbHistory={loadDbHistory} restoreDbVersion={restoreDbVersion} dbVersion={dbVersion} setDbVersion={setDbVersion} rp={rp} S={S} isMobile={isMobile}/>}
         {page==='database'&&!dbData&&<div style={{padding:40,textAlign:'center',color:'#6b7280'}}>Memuat database produk...</div>}
       </div>
 
@@ -647,13 +757,30 @@ function App() {
         <Modal onClose={()=>{setShowUpload(false);setUploadRows(null);setUploadErr('');setUploadWarn(null);setUploadName('');}} title="📂 Tambah Data Bulan Baru" subtitle="Upload CSV untuk menambahkan bulan baru."
           footer={<><button style={S.btn(false)} onClick={()=>{setShowUpload(false);setUploadRows(null);setUploadErr('');setUploadWarn(null);setUploadName('');}}>Batal</button><button style={{...S.btn(true),opacity:(!uploadName.trim()||!uploadRows)?0.4:1}} disabled={!uploadName.trim()||!uploadRows} onClick={doUpload}>📥 Import Data</button></>}>
           <div>
-            <div style={{marginBottom:12}}>
-              <label style={{fontSize:11,fontWeight:700,color:'#6b7280',display:'block',marginBottom:5,textTransform:'uppercase',letterSpacing:'.05em'}}>Nama Bulan *</label>
-              <input style={{...S.input,width:'100%'}} placeholder="contoh: April 2026" value={uploadName} onChange={e=>setUploadName(e.target.value)}/>
+            <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+              <div style={{flex:1,minWidth:160}}>
+                <label style={{fontSize:11,fontWeight:700,color:'#6b7280',display:'block',marginBottom:5,textTransform:'uppercase',letterSpacing:'.05em'}}>Nama Bulan *</label>
+                <input style={{...S.input,width:'100%'}} placeholder="contoh: April 2026" value={uploadName} onChange={e=>setUploadName(e.target.value)}/>
+              </div>
+              <div style={{minWidth:140}}>
+                <label style={{fontSize:11,fontWeight:700,color:'#6b7280',display:'block',marginBottom:5,textTransform:'uppercase',letterSpacing:'.05em'}}>Segment</label>
+                <select style={{...S.input,width:'100%',cursor:'pointer'}} value={uploadSeg||'auto'} onChange={e=>setUploadSeg(e.target.value)}>
+                  <option value="auto">🔍 Auto-detect</option>
+                  <option value="TM">🏪 TM (Toko)</option>
+                  <option value="MKT">🛒 Marketplace</option>
+                </select>
+              </div>
             </div>
-            <div style={{border:'2px dashed #e5e7eb',borderRadius:12,padding:24,textAlign:'center',cursor:'pointer',background:'#f0f1f3',marginBottom:10}} onClick={()=>document.getElementById('csvUp').click()}>
-              <div style={{fontSize:28,marginBottom:6}}>📄</div>
-              <div style={{fontFamily:"'Inter',sans-serif",fontWeight:800,fontSize:13,marginBottom:3}}>Klik untuk upload file CSV</div>
+            <div
+              style={{border:`2px dashed ${dragOver?'#2563eb':'#e5e7eb'}`,borderRadius:12,padding:24,textAlign:'center',cursor:'pointer',background:dragOver?'rgba(37,99,235,.06)':'#f0f1f3',marginBottom:10,transition:'all .2s'}}
+              onClick={()=>document.getElementById('csvUp').click()}
+              onDragOver={e=>{e.preventDefault();setDragOver(true);}}
+              onDragEnter={e=>{e.preventDefault();setDragOver(true);}}
+              onDragLeave={()=>setDragOver(false)}
+              onDrop={e=>{e.preventDefault();setDragOver(false);const f=e.dataTransfer.files[0];if(f)handleFile(f);}}
+            >
+              <div style={{fontSize:28,marginBottom:6}}>{dragOver?'📥':'📄'}</div>
+              <div style={{fontFamily:"'Inter',sans-serif",fontWeight:800,fontSize:13,marginBottom:3}}>{dragOver?'Lepaskan file di sini':'Drag & drop atau klik untuk upload CSV'}</div>
               <div style={{fontSize:11,color:'#6b7280'}}>tgl, kode, warna, size, qty, harga, keterangan</div>
               <input id="csvUp" type="file" accept=".csv" style={{display:'none'}} onChange={e=>handleFile(e.target.files[0])}/>
             </div>
@@ -740,7 +867,7 @@ function App() {
 // ── SUB PAGES ─────────────────────────────────────────────────
 
 // ── OVERVIEW PAGE ─────────────────────────────────────────────
-function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT,targetOmzet={},exportCSV}){
+function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT,targetOmzet={},exportCSV,generatePDF,isMobile=false,dbData=null}){
   const [chartView, setChartView] = useState('bulanan'); // 'bulanan' | 'mingguan'
   const [topMode, setTopMode] = useState('laba'); // 'laba' | 'laku' | 'omzet'
   const q = getStats(0);
@@ -808,7 +935,7 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
   return (
     <div>
       {/* STAT CARDS */}
-      <div style={S.statsGrid}>
+      <div style={{...S.statsGrid,gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fit,minmax(175px,1fr))'}}>
         {[
           { label: 'Total Omzet Q1', val: rpM(q.rev), sub: `${q.count} tx · ${q.days} hari`, col: '#e63946' },
           { label: 'Total HPP', val: rpM(q.hpp), sub: 'teridentifikasi', col: '#d97706' },
@@ -824,7 +951,7 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
       </div>
 
       {/* CHARTS ROW */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14, marginBottom: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile?'1fr':'1.4fr 1fr', gap: isMobile?10:14, marginBottom: isMobile?12:18 }}>
 
         {/* LEFT: BAR CHART */}
         <div style={{ ...S.card, overflow: 'hidden' }}>
@@ -971,7 +1098,7 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
         const totalCountMKT = segData.reduce((s,d) => s + d.mktCount, 0);
 
         return (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile?'1fr':'1fr 1fr', gap: isMobile?10:14, marginBottom: isMobile?12:18 }}>
             {/* LEFT: Stacked bar Online vs TM per bulan */}
             <div style={{ ...S.card, overflow: 'hidden' }}>
               <div style={{ ...S.cardHdr }}>
@@ -1057,6 +1184,135 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
                   </div>}
                 </div>
               </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── BEST SELLER vs SLOW MOVING ── */}
+      {(()=>{
+        const soldMap = {};
+        TX.forEach(t => {
+          const e = getEntry(t);
+          const k = e ? e.kode : t.kode;
+          if (!soldMap[k]) soldMap[k] = { kode: k, isDB: !!e, qty: 0, rev: 0, laba: 0 };
+          soldMap[k].qty += t.qty;
+          soldMap[k].rev += t.harga * t.qty;
+          const hpp = e ? e.hpp * t.qty : 0;
+          soldMap[k].laba += (t.harga * t.qty) - hpp;
+        });
+        const bestSellers = Object.values(soldMap).filter(p=>p.isDB).sort((a,b)=>b.qty-a.qty).slice(0,8);
+        const maxBestQty = Math.max(...bestSellers.map(p=>p.qty),1);
+
+        // Slow moving: produk di DB yang tidak terjual atau sedikit
+        const dbProds = dbData || [];
+        const slowMoving = dbProds
+          .map(p => ({ ...p, sold: (soldMap[p.kode.toUpperCase()]||{}).qty || 0 }))
+          .filter(p => p.sold < 3)
+          .sort((a,b) => a.sold - b.sold)
+          .slice(0, 8);
+
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile?'1fr':'1fr 1fr', gap: isMobile?10:14, marginBottom: isMobile?12:18 }}>
+            {/* Best Seller */}
+            <div style={{ ...S.card, overflow: 'hidden' }}>
+              <div style={{ ...S.cardHdr }}>
+                <span style={{ ...S.cardTitle }}>🔥 Best Seller (Qty)</span>
+              </div>
+              <div style={{ padding: '12px 16px' }}>
+                {bestSellers.map((p, i) => (
+                  <div key={p.kode} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <span style={{ width: 18, fontSize: 10, fontWeight: 800, color: i < 3 ? '#d97706' : '#9ca3af', textAlign: 'center' }}>{i + 1}</span>
+                    <span style={{ width: 70, fontSize: 10, fontWeight: 700, color: '#374151', fontFamily: "'JetBrains Mono',monospace" }}>{p.kode}</span>
+                    <div style={{ flex: 1, height: 14, background: '#f0f1f3', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ width: `${(p.qty / maxBestQty) * 100}%`, height: '100%', background: i < 3 ? '#f59e0b' : '#16a34a', borderRadius: 3, opacity: 0.8 }} />
+                    </div>
+                    <span style={{ width: 45, fontSize: 10, fontWeight: 700, color: '#6b7280', textAlign: 'right' }}>{p.qty} pcs</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Slow Moving */}
+            <div style={{ ...S.card, overflow: 'hidden' }}>
+              <div style={{ ...S.cardHdr }}>
+                <span style={{ ...S.cardTitle }}>🐢 Slow Moving (Stok Tidak Laku)</span>
+                <span style={{ fontSize: 9, color: '#dc2626', fontWeight: 600 }}>{slowMoving.length} produk</span>
+              </div>
+              <div style={{ padding: '12px 16px', maxHeight: 260, overflowY: 'auto' }}>
+                {slowMoving.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: 12, padding: 16 }}>Semua produk terjual!</div>
+                ) : slowMoving.map(p => (
+                  <div key={p.kode} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f0f1f3' }}>
+                    <div>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', fontFamily: "'JetBrains Mono',monospace" }}>{p.kode}</span>
+                      {p.nama && <span style={{ fontSize: 9, color: '#9ca3af', marginLeft: 6 }}>{p.nama}</span>}
+                    </div>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: p.sold === 0 ? '#dc2626' : '#d97706', background: p.sold === 0 ? 'rgba(220,38,38,.08)' : 'rgba(217,119,6,.08)', padding: '2px 8px', borderRadius: 20 }}>
+                      {p.sold === 0 ? 'Belum terjual' : `${p.sold} pcs`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── CUSTOMER INSIGHTS (Marketplace) ── */}
+      {(()=>{
+        const mktTx = TX.filter(t => (t.segment||'TM') === 'MKT' && t.buyer);
+        if (mktTx.length === 0) return null;
+        const buyerMap = {};
+        mktTx.forEach(t => {
+          const b = (t.buyer||'').toUpperCase();
+          if (!b) return;
+          if (!buyerMap[b]) buyerMap[b] = { name: t.buyer, count: 0, total: 0 };
+          buyerMap[b].count += t.qty;
+          buyerMap[b].total += t.harga * t.qty;
+        });
+        const buyers = Object.values(buyerMap);
+        const totalBuyers = buyers.length;
+        const repeatBuyers = buyers.filter(b => b.count > 1);
+        const repeatRate = totalBuyers > 0 ? (repeatBuyers.length / totalBuyers * 100) : 0;
+        const topRepeat = [...repeatBuyers].sort((a,b) => b.total - a.total).slice(0, 8);
+
+        return (
+          <div style={{ ...S.card, overflow: 'hidden', marginBottom: isMobile?12:18 }}>
+            <div style={{ ...S.cardHdr }}>
+              <span style={{ ...S.cardTitle }}>👥 Customer Insights (Marketplace)</span>
+            </div>
+            <div style={{ padding: '14px 18px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile?'repeat(2,1fr)':'repeat(4,1fr)', gap: 12, marginBottom: 14 }}>
+                {[
+                  ['Total Buyers', totalBuyers, '#2563eb'],
+                  ['Repeat Buyers', repeatBuyers.length, '#16a34a'],
+                  ['Repeat Rate', repeatRate.toFixed(1) + '%', '#9333ea'],
+                  ['Avg/Buyer', rpM(Math.round(mktTx.reduce((s,t)=>s+t.harga*t.qty,0)/Math.max(totalBuyers,1))), '#d97706']
+                ].map(([k,v,c]) => (
+                  <div key={k} style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase', letterSpacing: '.06em' }}>{k}</div>
+                    <div style={{ fontFamily: "'Bricolage Grotesque',sans-serif", fontSize: 20, fontWeight: 800, color: c }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              {topRepeat.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Top Repeat Customers</div>
+                  {topRepeat.map((b, i) => (
+                    <div key={b.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid #f0f1f3' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 9, fontWeight: 800, color: '#9ca3af', width: 16 }}>{i + 1}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#374151' }}>{b.name}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 10 }}>
+                        <span style={{ fontSize: 10, color: '#6b7280' }}>{b.count} items</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: '#16a34a', fontFamily: "'JetBrains Mono',monospace" }}>{rpM(b.total)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -1159,7 +1415,15 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
                 const tgt = targetOmzet&&targetOmzet[m]>0?targetOmzet[m]:null;
                 const tgtPct = tgt?Math.min((s.rev/tgt)*100,100):null;
                 return(<>
-                  {[['Omzet', rpM(s.rev), MCOL[m]||'#e63946'], ['HPP', rpM(s.hpp), 'rgba(241,241,240,.4)'], ['Laba', rpM(s.laba), s.laba>=0?'#16a34a':'#dc2626'], ['Margin', s.margin.toFixed(1)+'%', '#c084fc'], ['Transaksi', s.count+'', 'rgba(241,241,240,.7)'], ['Hari Aktif', s.days+' hari', 'rgba(241,241,240,.4)']].map(([k,v,col])=>(
+                  {/* Forecast: daily avg × 30 days */}
+                  {(()=>{
+                    const dailyAvg = s.days > 0 ? s.rev / s.days : 0;
+                    const forecast = Math.round(dailyAvg * 30);
+                    const forecastLaba = s.days > 0 ? Math.round(s.laba / s.days * 30) : 0;
+                    const fRows = [['Omzet', rpM(s.rev), MCOL[m]||'#e63946'], ['HPP', rpM(s.hpp), 'rgba(241,241,240,.4)'], ['Laba', rpM(s.laba), s.laba>=0?'#16a34a':'#dc2626'], ['Margin', s.margin.toFixed(1)+'%', '#c084fc'], ['Transaksi', s.count+'', 'rgba(241,241,240,.7)'], ['Hari Aktif', s.days+' hari', 'rgba(241,241,240,.4)']];
+                    if(s.days>3) fRows.push(['📈 Forecast/bln', rpM(forecast), '#0891b2']);
+                    return fRows;
+                  })().map(([k,v,col])=>(
                     <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'6px 16px',borderBottom:'1px solid #e2e4e8',alignItems:'center'}}>
                       <span style={{fontSize:11,color:'#6b7280',fontFamily:"'DM Sans',sans-serif"}}>{k}</span>
                       <div style={{display:'flex',alignItems:'center',gap:6}}>
@@ -1180,7 +1444,8 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
                     </div>
                   )}
                   {!tgt&&<div style={{height:5}}/>}
-                  <div style={{padding:'8px 16px',borderTop:'1px solid #e2e4e8',display:'flex',justifyContent:'flex-end'}}>
+                  <div style={{padding:'8px 16px',borderTop:'1px solid #e2e4e8',display:'flex',justifyContent:'flex-end',gap:6}}>
+                    <button style={{fontSize:9,fontWeight:700,padding:'3px 9px',borderRadius:7,border:'1px solid rgba(220,38,38,.2)',background:'rgba(220,38,38,.07)',color:'#dc2626',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}} onClick={()=>generatePDF(m)}>📄 PDF</button>
                     <button style={{fontSize:9,fontWeight:700,padding:'3px 9px',borderRadius:7,border:'1px solid rgba(96,165,250,.2)',background:'rgba(96,165,250,.07)',color:'#2563eb',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}} onClick={()=>exportCSV(m)}>↓ Export</button>
                   </div>
                 </>);
@@ -1196,7 +1461,7 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
 
 
 // ── BULANAN PAGE (merge Monthly + Daily) ─────────────────────
-function BulananPage({TX,monthFilter,setMonthFilter,allBulans,getStats,getEntry,getStatus,applyFix,editTx,deleteTx,exportCSV,targetOmzet,rp,rpM,S,MNAME,MSHORT,MCOL}){
+function BulananPage({TX,monthFilter,setMonthFilter,allBulans,getStats,getEntry,getStatus,applyFix,editTx,deleteTx,exportCSV,generatePDF,targetOmzet,rp,rpM,S,MNAME,MSHORT,MCOL,isMobile=false}){
   const [open,setOpen]=useState({});
   const [view,setView]=useState('summary'); // 'summary' or 'detail'
   const s=getStats(monthFilter);
@@ -1307,7 +1572,7 @@ function BulananPage({TX,monthFilter,setMonthFilter,allBulans,getStats,getEntry,
 }
 
 // ── TRANSAKSI PAGE (fokus koreksi kode) ──────────────────────
-function TxPage({TX,txFilter,setTxFilter,search,setSearch,getEntry,getStatus,applyFix,editHarga,editTx,deleteTx,rp,S,MSHORT}){
+function TxPage({TX,txFilter,setTxFilter,search,setSearch,getEntry,getStatus,applyFix,editHarga,editTx,deleteTx,rp,S,MSHORT,isMobile=false}){
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState('asc');
   const [viewMode, setViewMode] = useState('group'); // 'group' | 'list'
@@ -1867,15 +2132,16 @@ function ProdRow({g,i,cnt,totJual,avgJual,totHpp,laba,mg,applyFix,rp,S}){
 }
 
 function Modal({onClose,title,subtitle,children,footer}){
+  const mob=typeof window!=='undefined'&&window.innerWidth<768;
   return(
-    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.35)',backdropFilter:'blur(4px)',WebkitBackdropFilter:'blur(4px)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:'#ffffff',border:'1px solid #c8ccd4',borderRadius:16,width:540,maxWidth:'100%',maxHeight:'88vh',overflow:'hidden',display:'flex',flexDirection:'column',boxShadow:'0 20px 60px rgba(0,0,0,.15)'}}>
-        <div style={{padding:'20px 22px 14px',borderBottom:'1px solid #e2e4e8',flexShrink:0}}>
-          <div style={{fontFamily:"'Inter',sans-serif",fontSize:15,fontWeight:700,color:'#111827',marginBottom:4}}>{title}</div>
-          <div style={{fontSize:12,color:'#374151'}}>{subtitle}</div>
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.35)',backdropFilter:'blur(4px)',WebkitBackdropFilter:'blur(4px)',zIndex:500,display:'flex',alignItems:mob?'flex-end':'center',justifyContent:'center',padding:mob?0:20}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:'#ffffff',border:'1px solid #c8ccd4',borderRadius:mob?'16px 16px 0 0':16,width:mob?'100%':540,maxWidth:'100%',maxHeight:mob?'92vh':'88vh',overflow:'hidden',display:'flex',flexDirection:'column',boxShadow:'0 20px 60px rgba(0,0,0,.15)'}}>
+        <div style={{padding:mob?'16px 16px 10px':'20px 22px 14px',borderBottom:'1px solid #e2e4e8',flexShrink:0}}>
+          <div style={{fontFamily:"'Inter',sans-serif",fontSize:mob?14:15,fontWeight:700,color:'#111827',marginBottom:4}}>{title}</div>
+          <div style={{fontSize:mob?11:12,color:'#374151'}}>{subtitle}</div>
         </div>
-        <div style={{padding:'16px 22px',overflowY:'auto',flex:1}}>{children}</div>
-        <div style={{padding:'12px 22px',borderTop:'1px solid #e2e4e8',display:'flex',justifyContent:'flex-end',gap:8,flexShrink:0}}>{footer}</div>
+        <div style={{padding:mob?'12px 16px':'16px 22px',overflowY:'auto',flex:1}}>{children}</div>
+        <div style={{padding:mob?'10px 16px':'12px 22px',borderTop:'1px solid #e2e4e8',display:'flex',justifyContent:'flex-end',gap:8,flexShrink:0}}>{footer}</div>
       </div>
     </div>
   );
@@ -1883,7 +2149,7 @@ function Modal({onClose,title,subtitle,children,footer}){
 
 
 // ── DATABASE PAGE ─────────────────────────────────────────────
-function DatabasePage({dbData,setDbData,saveDbData,dbSearch,setDbSearch,showDbImport,setShowDbImport,showAddProd,setShowAddProd,dbImportRows,setDbImportRows,dbImportErr,setDbImportErr,newProd,setNewProd,dbHistory,setDbHistory,showHistory,setShowHistory,loadDbHistory,restoreDbVersion,dbVersion,setDbVersion,rp,S}){
+function DatabasePage({dbData,setDbData,saveDbData,dbSearch,setDbSearch,showDbImport,setShowDbImport,showAddProd,setShowAddProd,dbImportRows,setDbImportRows,dbImportErr,setDbImportErr,newProd,setNewProd,dbHistory,setDbHistory,showHistory,setShowHistory,loadDbHistory,restoreDbVersion,dbVersion,setDbVersion,rp,S,isMobile=false}){
   const [saving,setSaving]=useState(false);
   const [toast,setToast]=useState(null);
 
