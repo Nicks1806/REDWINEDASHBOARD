@@ -1341,37 +1341,42 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
         const totalMKT = segBulan.reduce((s,d)=>s+d.mkt,0);
 
         // ── LINE CHART (2 charts side by side) ──
+        const rpShort = n => rpM(n).replace('Rp ','');
         const renderLine = () => {
-          const PH = isMobile?140:200, halfW = isMobile?300:Math.max(280, 240), PL = 50, PR = 16, PT = 28, PB = 36;
+          const PH = isMobile?140:200, halfW = isMobile?300:380, PL = 50, PR = 20, PT = 28, PB = 36;
           const xStep = progData.length > 1 ? (halfW - PL - PR) / (progData.length - 1) : 0;
           const toX = (i) => PL + i * xStep;
           const badge = (x,y,text,bg,anc) => {
-            const w = text.length*6+14;
+            const w = Math.max(text.length*5.5+12, 50);
             const bx = anc==='start'?x+4:anc==='end'?x-w-4:x-w/2;
-            return (<g><rect x={bx} y={y-10} width={w} height={16} rx={5} fill={bg} opacity={.92}/><text x={bx+w/2} y={y+1} textAnchor="middle" fill="#fff" fontSize={isMobile?7:9} fontWeight={700}>{text}</text></g>);
+            return (<g><rect x={Math.max(2,bx)} y={y-9} width={w} height={15} rx={4} fill={bg} opacity={.9}/><text x={Math.max(2,bx)+w/2} y={y+1} textAnchor="middle" fill="#fff" fontSize={isMobile?7:8} fontWeight={700}>{text}</text></g>);
           };
-          const makeChart = (title, lines, maxV, subtitle) => {
+          const makeChart = (title, lines, maxV) => {
             const toY = v => PT + (1 - v / (maxV * 1.2)) * PH;
             return (
               <svg width={halfW} height={PH+PT+PB} style={{ display:'block', fontFamily:"'Inter',sans-serif" }}>
                 <text x={PL} y={14} fill="#374151" fontSize={10} fontWeight={800}>{title}</text>
-                {subtitle&&<text x={halfW-PR} y={14} textAnchor="end" fill="#9ca3af" fontSize={8}>{subtitle}</text>}
-                {[0,.5,1].map(f=>{const v=maxV*1.2*f,y=toY(v);return(<g key={f}><line x1={PL} x2={halfW-PR} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={PL-6} y={y+3} textAnchor="end" fill="#d1d5db" fontSize={7}>{rpM(Math.round(v)).replace('Rp ','')}</text></g>);})}
-                {/* Area for first line */}
+                {[0,.5,1].map(f=>{const v=maxV*1.2*f,y=toY(v);return(<g key={f}><line x1={PL} x2={halfW-PR} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={PL-6} y={y+3} textAnchor="end" fill="#d1d5db" fontSize={7}>{rpShort(Math.round(v))}</text></g>);})}
                 <path d={lines[0].data.map((v,i)=>`${i===0?'M':'L'}${toX(i)},${toY(v)}`).join(' ')+` L${toX(lines[0].data.length-1)},${PT+PH} L${toX(0)},${PT+PH} Z`} fill={lines[0].col} opacity={.08}/>
-                {/* Lines */}
                 {lines.map((ln,li)=>(
                   <path key={li} d={ln.data.map((v,i)=>`${i===0?'M':'L'}${toX(i)},${toY(v)}`).join(' ')} fill="none" stroke={ln.col} strokeWidth={ln.bold?3:2.5} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={ln.dash||''}/>
                 ))}
-                {/* Dots + labels */}
                 {lines[0].data.map((_,i)=>{
                   const anc = lines[0].data.length===1?'middle':i===0?'start':i===lines[0].data.length-1?'end':'middle';
+                  // Smart label: compute Y positions, avoid overlap
+                  const ys = lines.map(ln=>toY(ln.data[i]));
+                  const labelYs = ys.map((y,li)=>li===0?y-18:y+18);
+                  // If labels overlap (gap < 22), push second one further
+                  if(lines.length===2 && Math.abs(labelYs[0]-labelYs[1])<22){
+                    if(labelYs[1]>labelYs[0]) labelYs[1]=labelYs[0]+24;
+                    else labelYs[1]=labelYs[0]-24;
+                  }
                   return(<g key={i}>
                     <line x1={toX(i)} x2={toX(i)} y1={PT} y2={PT+PH} stroke="#f5f5f5" strokeWidth={1}/>
                     {lines.map((ln,li)=>(
                       <g key={li}>
-                        <circle cx={toX(i)} cy={toY(ln.data[i])} r={li===0?6:5} fill={ln.col} stroke="#fff" strokeWidth={2}/>
-                        {badge(toX(i), toY(ln.data[i])+(li===0?-16:18), `${ln.label?ln.label+' ':''}${rpM(ln.data[i])}`, ln.col, anc)}
+                        <circle cx={toX(i)} cy={ys[li]} r={li===0?5:4} fill={ln.col} stroke="#fff" strokeWidth={2}/>
+                        {badge(toX(i), labelYs[li], `${ln.label?ln.label+' ':''}${rpShort(ln.data[i])}`, ln.col, anc)}
                       </g>
                     ))}
                     <text x={toX(i)} y={PT+PH+14} textAnchor="middle" fill="#374151" fontSize={10} fontWeight={700}>{progData[i]?.short||''}</text>
@@ -1383,7 +1388,7 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
           };
           const maxSeg = Math.max(...segBulan.map(d=>Math.max(d.tm,d.mkt)),1);
           return (
-            <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?12:20, padding:'12px 16px', overflowX:'auto', justifyContent:'center' }}>
+            <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?12:24, padding:'12px 16px', overflowX:'auto', justifyContent:'center' }}>
               {makeChart('Omzet & Laba',
                 [
                   {data:progData.map(d=>d.rev), col:'#e63946', bold:true, label:''},
@@ -1448,7 +1453,8 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
               const sa = cum; cum+=ang;
               const sr = sa*Math.PI/180, er = cum*Math.PI/180;
               const mr = (sa+ang/2)*Math.PI/180;
-              return {...d, pct, sa, x1:cx+r*Math.cos(sr), y1:cy+r*Math.sin(sr), x2:cx+r*Math.cos(er), y2:cy+r*Math.sin(er), la:ang>180?1:0, mr, lx:cx+(r+28)*Math.cos(mr), ly:cy+(r+28)*Math.sin(mr)};
+              const rawLx = cx+(r+35)*Math.cos(mr);
+              return {...d, pct, sa, x1:cx+r*Math.cos(sr), y1:cy+r*Math.sin(sr), x2:cx+r*Math.cos(er), y2:cy+r*Math.sin(er), la:ang>180?1:0, mr, lx:Math.max(10,rawLx), ly:cy+(r+35)*Math.sin(mr)};
             });
             return (<g>
               {slices.map((s,i)=>{
@@ -1466,9 +1472,9 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
               <text x={cx} y={cy+10} textAnchor="middle" fill="#6b7280" fontSize={isMobile?8:10} fontWeight={600}>{subtitle}</text>
             </g>);
           };
-          const P1CX = isMobile?120:170, P2CX = isMobile?120:520, PCY = isMobile?120:130;
+          const P1CX = isMobile?130:210, P2CX = isMobile?130:560, PCY = isMobile?130:140;
           const PR = isMobile?65:85;
-          const SVGW = isMobile?250:700, SVGH = isMobile?250:280;
+          const SVGW = isMobile?270:770, SVGH = isMobile?270:300;
           const tmMktData = [{name:'TM (Toko)',val:totalTM,col:'#2563eb'},{name:'MKT (Online)',val:totalMKT,col:'#9333ea'}];
           const monthColors = ['#e63946','#f59e0b','#3b82f6','#8b5cf6','#06b6d4','#ec4899'];
           const monthData = progData.map((d,i)=>({name:d.short,val:d.rev,col:monthColors[i%6]}));
