@@ -1384,12 +1384,12 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
           const maxSeg = Math.max(...segBulan.map(d=>Math.max(d.tm,d.mkt)),1);
           return (
             <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?12:20, padding:'12px 16px', overflowX:'auto', justifyContent:'center' }}>
-              {makeChart('Omzet & Laba','',
+              {makeChart('Omzet & Laba',
                 [
                   {data:progData.map(d=>d.rev), col:'#e63946', bold:true, label:''},
                   {data:progData.map(d=>d.laba), col:'#16a34a', label:''},
                 ], maxR)}
-              {makeChart('TM vs Marketplace','',
+              {makeChart('TM vs Marketplace',
                 [
                   {data:segBulan.map(d=>d.tm), col:'#2563eb', bold:true, label:'TM'},
                   {data:segBulan.map(d=>d.mkt), col:'#9333ea', dash:'6,3', label:'MKT'},
