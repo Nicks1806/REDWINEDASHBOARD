@@ -669,15 +669,19 @@ function App() {
 
   const doUpload = () => {
     if(!uploadName.trim()||!uploadRows?.length)return;
+    // Filter out rejected rows and clean internal flags
+    const approved = uploadRows.filter(r=>!r._rejected).map(({_fromNama,_rejected,...rest})=>rest);
+    if(!approved.length){showToastMsg('⚠️ Semua baris di-reject');return;}
     // Snapshot sebelum import data baru
     saveTxSnapshot('Sebelum Import: '+uploadName);
     const existBulans=[...new Set(TX_ALL.map(t=>t.bulan))];
     const nb=Math.max(...existBulans)+1;
-    const newRows=uploadRows.map(r=>({...r,bulan:nb}));
+    const newRows=approved.map(r=>({...r,bulan:nb}));
     const nd=[...txData,...newRows];
     setTxData(nd); persist(nd,resolved);
     setShowUpload(false); setUploadName(''); setUploadRows(null); setUploadErr('');
-    showToastMsg(`✅ ${uploadName} diimport — ${newRows.length} transaksi`);
+    const rejCount = uploadRows.filter(r=>r._rejected).length;
+    showToastMsg(`✅ ${uploadName} diimport — ${newRows.length} transaksi${rejCount?` (${rejCount} di-reject)`:''}`);
   };
 
   if(!txData) return (
@@ -781,7 +785,16 @@ function App() {
       {/* MODAL UPLOAD */}
       {showUpload&&(
         <Modal onClose={()=>{setShowUpload(false);setUploadRows(null);setUploadErr('');setUploadWarn(null);setUploadName('');}} title="📂 Tambah Data Bulan Baru" subtitle="Upload CSV untuk menambahkan bulan baru."
-          footer={<><button style={S.btn(false)} onClick={()=>{setShowUpload(false);setUploadRows(null);setUploadErr('');setUploadWarn(null);setUploadName('');}}>Batal</button><button style={{...S.btn(false),opacity:(!uploadName.trim()||!uploadRows)?0.4:1,background:uploadRows?'rgba(22,163,74,.1)':'#f0f1f3',border:`1px solid ${uploadRows?'#16a34a':'#c8ccd4'}`,color:uploadRows?'#16a34a':'#6b7280',fontWeight:700}} disabled={!uploadName.trim()||!uploadRows} onClick={doUpload}>✅ Approve & Import</button></>}>
+          footer={<div style={{display:'flex',justifyContent:'space-between',width:'100%',alignItems:'center'}}>
+            <div style={{display:'flex',gap:6}}>
+              <button style={S.btn(false)} onClick={()=>{setShowUpload(false);setUploadRows(null);setUploadErr('');setUploadWarn(null);setUploadName('');}}>Batal</button>
+              {uploadRows&&uploadRows.length>0&&<button style={{...S.btn(false),color:'#dc2626',border:'1px solid rgba(220,38,38,.2)',background:'rgba(220,38,38,.05)',fontSize:10}} onClick={()=>{setUploadRows(null);setUploadErr('');setUploadWarn(null);}}>🗑️ Reset</button>}
+            </div>
+            <div style={{display:'flex',gap:6,alignItems:'center'}}>
+              {uploadRows&&uploadRows.filter(r=>r._rejected).length>0&&<span style={{fontSize:9,color:'#dc2626',fontWeight:600}}>{uploadRows.filter(r=>r._rejected).length} rejected</span>}
+              <button style={{...S.btn(false),opacity:(!uploadName.trim()||!uploadRows||!uploadRows.filter(r=>!r._rejected).length)?0.4:1,background:'rgba(22,163,74,.1)',border:'1px solid #16a34a',color:'#16a34a',fontWeight:700}} disabled={!uploadName.trim()||!uploadRows||!uploadRows.filter(r=>!r._rejected).length} onClick={doUpload}>✅ Approve & Import ({uploadRows?uploadRows.filter(r=>!r._rejected).length:0})</button>
+            </div>
+          </div>}>
           <div>
             <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap'}}>
               <div style={{flex:1,minWidth:160}}>
@@ -812,20 +825,28 @@ function App() {
             </div>
             {uploadRows&&uploadRows.length>0&&(
               <div style={{marginBottom:10}}>
-                {/* Summary */}
-                <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:8,alignItems:'center'}}>
-                  <span style={{fontSize:12,fontWeight:700,color:'#16a34a'}}>✅ {uploadRows.length} transaksi terdeteksi</span>
-                  <span style={{fontSize:10,color:'#2563eb',fontWeight:600}}>🏪 TM: {uploadRows.filter(r=>(r.segment||'TM')==='TM').length}</span>
-                  <span style={{fontSize:10,color:'#9333ea',fontWeight:600}}>🛒 MKT: {uploadRows.filter(r=>(r.segment||'TM')==='MKT').length}</span>
-                  {uploadRows.filter(r=>r._fromNama).length>0&&<span style={{fontSize:10,color:'#d97706',fontWeight:600}}>⚠️ {uploadRows.filter(r=>r._fromNama).length} kode perlu review</span>}
+                {/* Summary + Actions */}
+                <div style={{display:'flex',justifyContent:'space-between',flexWrap:'wrap',marginBottom:8,alignItems:'center',gap:6}}>
+                  <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+                    <span style={{fontSize:12,fontWeight:700,color:'#16a34a'}}>✅ {uploadRows.length} transaksi</span>
+                    <span style={{fontSize:10,color:'#2563eb',fontWeight:600}}>🏪 TM: {uploadRows.filter(r=>(r.segment||'TM')==='TM').length}</span>
+                    <span style={{fontSize:10,color:'#9333ea',fontWeight:600}}>🛒 MKT: {uploadRows.filter(r=>(r.segment||'TM')==='MKT').length}</span>
+                    {uploadRows.filter(r=>r._fromNama).length>0&&<span style={{fontSize:10,color:'#d97706',fontWeight:600}}>⚠️ {uploadRows.filter(r=>r._fromNama).length} perlu review</span>}
+                  </div>
+                  <button style={{fontSize:9,fontWeight:700,padding:'4px 10px',borderRadius:7,border:'1px solid rgba(96,165,250,.3)',background:'rgba(96,165,250,.08)',color:'#2563eb',cursor:'pointer'}} onClick={()=>{
+                    const hdr=['Tgl','Kode','Nama','Qty','Harga','HPP','Segment'].join(',');
+                    const rows=uploadRows.map(r=>{const db=DBMAP[r.kode?.toUpperCase()];return[r.tgl,r.kode,`"${(r.ket||'').replace(/"/g,"'")}"`,r.qty,r.harga,db?db.hpp:'',r.segment||'TM'].join(',');});
+                    const csv=hdr+'\n'+rows.join('\n');
+                    const blob=new Blob([csv],{type:'text/csv'});const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download='preview_import.csv';a.click();URL.revokeObjectURL(u);
+                  }}>📥 Download Preview CSV</button>
                 </div>
                 {/* Preview Table */}
-                <div style={{border:'1px solid #e2e4e8',borderRadius:10,overflow:'hidden',maxHeight:280,overflowY:'auto',background:'#fff'}}>
+                <div style={{border:'1px solid #e2e4e8',borderRadius:10,overflow:'hidden',maxHeight:300,overflowY:'auto',background:'#fff'}}>
                   <table style={{width:'100%',borderCollapse:'collapse',fontSize:10}}>
                     <thead>
                       <tr style={{background:'#f8f9fb',position:'sticky',top:0,zIndex:1}}>
-                        {['#','Tgl','Kode','Nama/Ket','Qty','Harga','HPP','Seg'].map(h=>(
-                          <th key={h} style={{padding:'6px 8px',textAlign:h==='Harga'||h==='HPP'?'right':'left',fontSize:8,fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',color:'#6b7280',borderBottom:'1px solid #e2e4e8',whiteSpace:'nowrap'}}>{h}</th>
+                        {['#','Tgl','Kode','Nama/Ket','Qty','Harga','HPP','Seg',''].map(h=>(
+                          <th key={h} style={{padding:'6px 6px',textAlign:h==='Harga'||h==='HPP'?'right':'left',fontSize:8,fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',color:'#6b7280',borderBottom:'1px solid #e2e4e8',whiteSpace:'nowrap'}}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -834,19 +855,32 @@ function App() {
                         const dbEntry = DBMAP[r.kode?.toUpperCase()];
                         const hpp = dbEntry ? dbEntry.hpp : null;
                         return(
-                          <tr key={i} style={{background:r._fromNama?'#fffbeb':'transparent',borderBottom:'1px solid #f0f1f3'}}>
-                            <td style={{padding:'5px 8px',color:'#9ca3af',fontSize:9}}>{i+1}</td>
-                            <td style={{padding:'5px 8px',fontWeight:600}}>{r.tgl}</td>
-                            <td style={{padding:'5px 8px',fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:r._fromNama?'#d97706':dbEntry?'#16a34a':'#374151',fontSize:10}}>
-                              {r.kode}
-                              {r._fromNama&&<span style={{fontSize:7,color:'#d97706',marginLeft:3}}>?</span>}
+                          <tr key={i} style={{background:r._rejected?'rgba(220,38,38,.05)':r._fromNama?'#fffbeb':'transparent',borderBottom:'1px solid #f0f1f3',opacity:r._rejected?.7:1,textDecoration:r._rejected?'line-through':'none'}}>
+                            <td style={{padding:'4px 6px',color:'#9ca3af',fontSize:9}}>{i+1}</td>
+                            <td style={{padding:'4px 6px',fontWeight:600,width:30}}>
+                              <input style={{border:'1px solid #e2e4e8',borderRadius:4,padding:'2px 4px',width:28,fontSize:10,textAlign:'center',fontWeight:600,background:'transparent'}} value={r.tgl} onChange={e=>{const nd=[...uploadRows];nd[i]={...nd[i],tgl:parseInt(e.target.value)||r.tgl};setUploadRows(nd);}}/>
                             </td>
-                            <td style={{padding:'5px 8px',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'#6b7280',fontSize:9}}>{r.ket||r.kode}</td>
-                            <td style={{padding:'5px 8px',textAlign:'center'}}>{r.qty}</td>
-                            <td style={{padding:'5px 8px',textAlign:'right',fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{rp(r.harga)}</td>
-                            <td style={{padding:'5px 8px',textAlign:'right',fontFamily:"'JetBrains Mono',monospace",color:hpp?'#16a34a':'#dc2626',fontSize:9}}>{hpp?rp(hpp):'-'}</td>
-                            <td style={{padding:'5px 4px'}}>
-                              <span style={{fontSize:8,fontWeight:700,padding:'2px 6px',borderRadius:12,background:(r.segment||'TM')==='TM'?'rgba(37,99,235,.1)':'rgba(147,51,234,.1)',color:(r.segment||'TM')==='TM'?'#2563eb':'#9333ea'}}>{r.segment||'TM'}</span>
+                            <td style={{padding:'4px 6px',width:80}}>
+                              <input style={{border:'1px solid #e2e4e8',borderRadius:4,padding:'2px 4px',width:72,fontSize:9,fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:r._fromNama?'#d97706':dbEntry?'#16a34a':'#374151',background:'transparent'}} value={r.kode} onChange={e=>{const nd=[...uploadRows];nd[i]={...nd[i],kode:e.target.value.toUpperCase(),_fromNama:false};setUploadRows(nd);}}/>
+                            </td>
+                            <td style={{padding:'4px 6px',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'#6b7280',fontSize:9}} title={r.ket}>{r.ket||r.kode}</td>
+                            <td style={{padding:'4px 6px',width:30}}>
+                              <input style={{border:'1px solid #e2e4e8',borderRadius:4,padding:'2px 4px',width:26,fontSize:10,textAlign:'center',background:'transparent'}} value={r.qty} onChange={e=>{const nd=[...uploadRows];nd[i]={...nd[i],qty:parseInt(e.target.value)||1};setUploadRows(nd);}}/>
+                            </td>
+                            <td style={{padding:'4px 6px',textAlign:'right',width:70}}>
+                              <input style={{border:'1px solid #e2e4e8',borderRadius:4,padding:'2px 4px',width:64,fontSize:9,textAlign:'right',fontFamily:"'JetBrains Mono',monospace",fontWeight:600,background:'transparent'}} value={r.harga} onChange={e=>{const nd=[...uploadRows];nd[i]={...nd[i],harga:parseInt(e.target.value)||0};setUploadRows(nd);}}/>
+                            </td>
+                            <td style={{padding:'4px 6px',textAlign:'right',fontFamily:"'JetBrains Mono',monospace",color:hpp?'#16a34a':'#dc2626',fontSize:9}}>{hpp?rp(hpp):'-'}</td>
+                            <td style={{padding:'4px 4px'}}>
+                              <select style={{fontSize:8,fontWeight:700,padding:'2px 4px',borderRadius:8,border:'1px solid #e2e4e8',background:(r.segment||'TM')==='TM'?'rgba(37,99,235,.08)':'rgba(147,51,234,.08)',color:(r.segment||'TM')==='TM'?'#2563eb':'#9333ea',cursor:'pointer'}} value={r.segment||'TM'} onChange={e=>{const nd=[...uploadRows];nd[i]={...nd[i],segment:e.target.value};setUploadRows(nd);}}>
+                                <option value="TM">TM</option>
+                                <option value="MKT">MKT</option>
+                              </select>
+                            </td>
+                            <td style={{padding:'4px 4px',width:24}}>
+                              <button style={{fontSize:10,border:'none',background:'none',cursor:'pointer',color:r._rejected?'#16a34a':'#dc2626',padding:'2px',borderRadius:4,lineHeight:1}} title={r._rejected?'Restore':'Hapus baris ini'} onClick={()=>{const nd=[...uploadRows];nd[i]={...nd[i],_rejected:!nd[i]._rejected};setUploadRows(nd);}}>
+                                {r._rejected?'↩':'✕'}
+                              </button>
                             </td>
                           </tr>
                         );
