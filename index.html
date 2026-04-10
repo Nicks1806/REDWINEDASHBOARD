@@ -1491,21 +1491,116 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
           );
         };
 
+        // ── PER BULAN (grouped bar: Omzet breakdown TM vs MKT per bulan) ──
+        const renderPerBulan = () => {
+          const segBulan = allBulans.map(m => {
+            const txM = TX.filter(t=>t.bulan===m);
+            const tmR = txM.filter(t=>(t.segment||'TM')==='TM').reduce((s,t)=>s+t.harga*t.qty,0);
+            const mktR = txM.filter(t=>(t.segment||'TM')==='MKT').reduce((s,t)=>s+t.harga*t.qty,0);
+            return { m, label: MNAME[m]||`Bulan ${m}`, short: MSHORT[m]||`B${m}`, tm: tmR, mkt: mktR, total: tmR+mktR };
+          });
+          const maxSB = Math.max(...segBulan.map(d=>d.total),1);
+          const BW = isMobile?28:40, GAP = isMobile?4:6, GG = isMobile?30:50;
+          const CH = isMobile?160:200, YW = 52;
+          const totalSW = segBulan.length*(BW*2+GAP+GG)+YW+20;
+          const yTx = [0,.25,.5,.75,1].map(f=>Math.round(maxSB*1.1*f));
+          return (
+            <div style={{ overflowX:'auto', padding:'12px 16px' }}>
+              <svg width={Math.max(totalSW,300)} height={CH+50} style={{ display:'block', fontFamily:"'Inter',sans-serif" }}>
+                {yTx.map((v,i)=>{const y=10+(1-v/(maxSB*1.1))*CH;return(<g key={i}><line x1={YW} x2={totalSW} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={YW-6} y={y+3} textAnchor="end" fill="#c8ccd4" fontSize={8}>{rpM(v).replace('Rp ','')}</text></g>);})}
+                {segBulan.map((d,i)=>{
+                  const x = YW+10+i*(BW*2+GAP+GG);
+                  const tmH = (d.tm/(maxSB*1.1))*CH;
+                  const mktH = (d.mkt/(maxSB*1.1))*CH;
+                  return(<g key={d.m}>
+                    <rect x={x} y={10+CH-tmH} width={BW} height={tmH} fill="#2563eb" rx={3} opacity={0.85}><title>TM: {rpM(d.tm)}</title></rect>
+                    <rect x={x+BW+GAP} y={10+CH-mktH} width={BW} height={mktH} fill="#9333ea" rx={3} opacity={0.85}><title>MKT: {rpM(d.mkt)}</title></rect>
+                    {tmH>20&&<text x={x+BW/2} y={10+CH-tmH+14} textAnchor="middle" fill="#fff" fontSize={8} fontWeight={700}>{rpM(d.tm)}</text>}
+                    {mktH>20&&<text x={x+BW+GAP+BW/2} y={10+CH-mktH+14} textAnchor="middle" fill="#fff" fontSize={8} fontWeight={700}>{rpM(d.mkt)}</text>}
+                    <text x={x+BW+GAP/2} y={10+CH+16} textAnchor="middle" fill="#374151" fontSize={10} fontWeight={700}>{d.short}</text>
+                    <text x={x+BW+GAP/2} y={10+CH+28} textAnchor="middle" fill="#9ca3af" fontSize={8}>{rpM(d.total)}</text>
+                  </g>);
+                })}
+                <line x1={YW} x2={totalSW} y1={10+CH} y2={10+CH} stroke="#e2e4e8" strokeWidth={1.5}/>
+              </svg>
+            </div>
+          );
+        };
+
+        // ── ONLINE vs TOKO (dual line chart) ──
+        const renderTMvsMKT = () => {
+          const segLine = allBulans.map(m => {
+            const txM = TX.filter(t=>t.bulan===m);
+            const tmR = txM.filter(t=>(t.segment||'TM')==='TM').reduce((s,t)=>s+t.harga*t.qty,0);
+            const mktR = txM.filter(t=>(t.segment||'TM')==='MKT').reduce((s,t)=>s+t.harga*t.qty,0);
+            const tmC = txM.filter(t=>(t.segment||'TM')==='TM').length;
+            const mktC = txM.filter(t=>(t.segment||'TM')==='MKT').length;
+            return { m, short: MSHORT[m]||`B${m}`, label: MNAME[m]||`Bulan ${m}`, tm: tmR, mkt: mktR, tmC, mktC };
+          });
+          const maxSL = Math.max(...segLine.map(d=>Math.max(d.tm,d.mkt)),1);
+          const LH = isMobile?160:210, LW = isMobile?320:500, LL = 58, LR = 60, LT = 28, LB = 45;
+          const lxStep = segLine.length>1?(LW-LL-LR)/(segLine.length-1):0;
+          const lToY = v=>LT+(1-v/(maxSL*1.2))*LH;
+          const lToX = i=>LL+i*lxStep;
+          const tmPath = segLine.map((d,i)=>`${i===0?'M':'L'}${lToX(i)},${lToY(d.tm)}`).join(' ');
+          const mktPath = segLine.map((d,i)=>`${i===0?'M':'L'}${lToX(i)},${lToY(d.mkt)}`).join(' ');
+          const tmArea = tmPath+` L${lToX(segLine.length-1)},${LT+LH} L${lToX(0)},${LT+LH} Z`;
+          const mktArea = mktPath+` L${lToX(segLine.length-1)},${LT+LH} L${lToX(0)},${LT+LH} Z`;
+          return (
+            <div style={{ overflowX:'auto', padding:'8px 0' }}>
+              <svg width={LW} height={LH+LT+LB} style={{ display:'block', fontFamily:"'Inter',sans-serif", margin:'0 auto' }}>
+                {[0,.25,.5,.75,1].map(f=>{const v=maxSL*1.2*f,y=lToY(v);return(<g key={f}><line x1={LL} x2={LW-LR} y1={y} y2={y} stroke="#f0f1f3" strokeWidth={1}/><text x={LL-8} y={y+3} textAnchor="end" fill="#c8ccd4" fontSize={8}>{rpM(Math.round(v)).replace('Rp ','')}</text></g>);})}
+                <path d={tmArea} fill="rgba(37,99,235,.08)"/>
+                <path d={mktArea} fill="rgba(147,51,234,.06)"/>
+                <path d={tmPath} fill="none" stroke="#2563eb" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"/>
+                <path d={mktPath} fill="none" stroke="#9333ea" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="8,4"/>
+                {segLine.map((d,i)=>{
+                  const anc = segLine.length===1?'middle':i===0?'start':i===segLine.length-1?'end':'middle';
+                  const ox = anc==='end'?-38:anc==='start'?38:0;
+                  return(<g key={d.m}>
+                    <line x1={lToX(i)} x2={lToX(i)} y1={LT} y2={LT+LH} stroke="#f0f1f3" strokeWidth={1}/>
+                    {/* TM dot + label */}
+                    <circle cx={lToX(i)} cy={lToY(d.tm)} r={6} fill="#2563eb" stroke="#fff" strokeWidth={2.5}/>
+                    <rect x={lToX(i)+ox-40} y={lToY(d.tm)-24} width={80} height={18} rx={4} fill="rgba(37,99,235,.9)"/>
+                    <text x={lToX(i)+ox} y={lToY(d.tm)-11} textAnchor="middle" fill="#fff" fontSize={9} fontWeight={700}>TM {rpM(d.tm)}</text>
+                    {/* MKT dot + label */}
+                    <circle cx={lToX(i)} cy={lToY(d.mkt)} r={5} fill="#9333ea" stroke="#fff" strokeWidth={2}/>
+                    <rect x={lToX(i)+ox-40} y={lToY(d.mkt)+8} width={80} height={18} rx={4} fill="rgba(147,51,234,.9)"/>
+                    <text x={lToX(i)+ox} y={lToY(d.mkt)+21} textAnchor="middle" fill="#fff" fontSize={9} fontWeight={700}>MKT {rpM(d.mkt)}</text>
+                    {/* X label */}
+                    <text x={lToX(i)} y={LT+LH+18} textAnchor="middle" fill="#374151" fontSize={11} fontWeight={700}>{d.short}</text>
+                    <text x={lToX(i)} y={LT+LH+32} textAnchor="middle" fill="#9ca3af" fontSize={8}>{d.tmC+d.mktC} tx</text>
+                  </g>);
+                })}
+              </svg>
+            </div>
+          );
+        };
+
+        // ── Dynamic legend based on view ──
+        const legendMap = {
+          line: [['#e63946','Omzet'],['#16a34a','Laba']],
+          bar: [['#e63946','Omzet'],['#16a34a','Laba']],
+          pie: [],
+          perbulan: [['#2563eb','TM (Toko)'],['#9333ea','Marketplace']],
+          tmvsmkt: [['#2563eb','TM (Toko)'],['#9333ea','Marketplace']],
+        };
+
         return (
           <div style={{ ...S.card, overflow:'hidden', marginBottom: isMobile?12:18 }}>
-            <div style={{ ...S.cardHdr }}>
+            <div style={{ ...S.cardHdr, flexWrap:'wrap', gap:8 }}>
               <span style={{ ...S.cardTitle }}>Progress Bulanan</span>
-              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                 {/* Legend */}
-                {progView!=='pie'&&<div style={{ display:'flex', gap:10, marginRight:8 }}>
-                  {[['#e63946','Omzet'],['#16a34a','Laba']].map(([c,l])=>(
+                {(legendMap[progView]||[]).length>0&&<div style={{ display:'flex', gap:10, marginRight:4 }}>
+                  {(legendMap[progView]||[]).map(([c,l])=>(
                     <span key={l} style={{ fontSize:9, fontWeight:600, color:c, display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:2, background:c, display:'inline-block' }}/>{l}</span>
                   ))}
                 </div>}
                 {/* View toggle */}
                 <div style={{ display:'flex', border:'1.5px solid #e2e4e8', borderRadius:8, overflow:'hidden' }}>
-                  {[['line','📈 Line'],['bar','📊 Bar'],['pie','🥧 Pie']].map(([v,l])=>(
-                    <button key={v} onClick={()=>setProgView(v)} style={{ fontSize:9, fontWeight:700, padding:'4px 10px', border:'none', cursor:'pointer', fontFamily:"'Inter',sans-serif", background:progView===v?'#b01c2e':'#fff', color:progView===v?'#fff':'#6b7280', transition:'all .15s' }}>{l}</button>
+                  {[['line','📈 Line'],['bar','📊 Bar'],['pie','🥧 Pie'],['perbulan','📅 Per Bulan'],['tmvsmkt','🏪vs🛒']].map(([v,l])=>(
+                    <button key={v} onClick={()=>setProgView(v)} style={{ fontSize:isMobile?8:9, fontWeight:700, padding:isMobile?'4px 6px':'4px 10px', border:'none', cursor:'pointer', fontFamily:"'Inter',sans-serif", background:progView===v?'#b01c2e':'#fff', color:progView===v?'#fff':'#6b7280', transition:'all .15s' }}>{l}</button>
                   ))}
                 </div>
               </div>
@@ -1513,6 +1608,8 @@ function OverviewPage({TX,allBulans,getStats,getEntry,rpM,rp,S,MNAME,MCOL,MSHORT
             {progView==='line'&&renderLine()}
             {progView==='bar'&&renderBar()}
             {progView==='pie'&&renderPie()}
+            {progView==='perbulan'&&renderPerBulan()}
+            {progView==='tmvsmkt'&&renderTMvsMKT()}
           </div>
         );
       })()}
