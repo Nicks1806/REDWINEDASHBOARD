@@ -424,20 +424,31 @@ function App() {
 
         // Auto-detect segment from headers
         const hasShopeeCol = hdr.some(h=>h.includes('shopee')||h.includes('user shopee'));
+        const hasSumberCol = fi(['sumber','source'])>=0;
         const hasBuyerCol = fi(['nama user shopee','nama user','buyer','username']);
-        if(uploadSeg==='auto' && (hasShopeeCol||isFormatB)) setUploadSeg('MKT');
+        // Only auto-set MKT if Shopee column found (not if Sumber exists — let per-row detection handle it)
+        if(uploadSeg==='auto' && hasShopeeCol && !hasSumberCol) setUploadSeg('MKT');
 
         const rows = [];
         let skipped = 0;
 
         if (isFormatB) {
-          // Format B: Nama Barang, QTY, amount
+          // Format B: Nama Barang, QTY, amount (Jubelio/marketplace)
           const cNama = fi(['nama barang','nama_barang','name','product name','product_name']);
           const cQty  = fi(['qty','jumlah','quantity']);
           const cHarga= fi(['amount','harga','harga_jual','price','total']);
           const cKet  = fi(['ket','keterangan','catatan','note','notes']);
+          const cSumber = fi(['sumber','source','channel']);
+          const cTgl  = fi(['tanggal','tgl','date','tgl transaksi']);
 
           if(cNama<0||cHarga<0){setUploadErr('Kolom "Nama Barang" dan "amount" harus ada');return;}
+
+          // Auto-detect segment from Sumber column (check first data row)
+          if(uploadSeg==='auto' && cSumber>=0){
+            const firstRow = lines[1]?.match(/(".*?"|[^,]+)/g)?.map(s=>s.replace(/^"|"$/g,'').trim()) || [];
+            const sumber = (firstRow[cSumber]||'').toUpperCase();
+            if(sumber.includes('POS')||sumber.includes('TOKO')||sumber.includes('OFFLINE')) setUploadSeg('TM');
+          }
 
           lines.slice(1).forEach((line,idx)=>{
             // Handle quoted fields with commas inside
@@ -454,21 +465,36 @@ function App() {
             if(isNaN(harga)||harga<=0){skipped++;return;}
 
             const qty = Math.max(1, parseInt(cols[cQty]||'1')||1);
-            const ket = cKet>=0 ? (cols[cKet]||'') : nama; // store full name as ket
+            const ket = cKet>=0 ? (cols[cKet]||'') : nama;
 
             // Extract kode from nama
             const kode = extractKodeFromNama(nama);
 
+            // Per-row segment from Sumber column
+            let rowSeg = uploadSeg!=='auto'?uploadSeg:'MKT';
+            if(uploadSeg==='auto' && cSumber>=0){
+              const sumber = (cols[cSumber]||'').toUpperCase();
+              rowSeg = (sumber.includes('POS')||sumber.includes('TOKO')||sumber.includes('OFFLINE'))?'TM':'MKT';
+            }
+
+            // Parse tanggal if available (format: 2026-04-01 or 2026-04-01 13:38:45)
+            let tgl = idx+1;
+            if(cTgl>=0){
+              const tglRaw = cols[cTgl]||'';
+              const dm = tglRaw.match(/(\d{4})-(\d{2})-(\d{2})/)||tglRaw.match(/(\d{1,2})[/-](\d{1,2})/);
+              if(dm) tgl = parseInt(dm[3]||dm[1])||idx+1;
+            }
+
             rows.push({
-              tgl: idx+1, // use row number as tgl since no date in this format
-              kode: kode || nama.substring(0,30), // fallback to nama if no kode found
+              tgl,
+              kode: kode || nama.substring(0,30),
               warna: '',
               size: '',
               qty,
               harga: Math.round(harga),
-              ket: nama, // store full nama as keterangan
-              segment: uploadSeg!=='auto'?uploadSeg:'MKT', // Format Jubelio = Marketplace
-              _fromNama: !kode, // flag: kode extracted from nama, may need review
+              ket: nama,
+              segment: rowSeg,
+              _fromNama: !kode,
             });
           });
         } else {
